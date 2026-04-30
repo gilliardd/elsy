@@ -5,7 +5,10 @@ import { createTransaction } from '../../models/Transaction';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { getConfirmTransactionKeyboard } from '../keyboards/inlineKeyboards';
 
-// Armazena transacoes pendentes de confirmacao (compartilhado com mediaHandler)
+// FASE 1 (multi-tenancy): bot ainda atende apenas o admin via Telegram.
+// A virada para WhatsApp + identificacao por numero acontece na Fase 3.
+const ADMIN_USER_ID = 1;
+
 const pendingTransactions = new Map<number, {
   parsed: ParsedTransaction;
   categoryId: number;
@@ -33,11 +36,8 @@ export async function handleMessage(bot: TelegramBot, msg: TelegramBot.Message):
   const text = msg.text;
 
   if (!text) return;
-
-  // Ignora comandos (sao tratados separadamente)
   if (text.startsWith('/')) return;
 
-  // Verifica se parece ser uma transacao
   const looksLikeTransaction = await isTransactionMessage(text);
 
   if (!looksLikeTransaction) {
@@ -48,12 +48,10 @@ export async function handleMessage(bot: TelegramBot, msg: TelegramBot.Message):
     return;
   }
 
-  // Envia mensagem de "digitando"
   await bot.sendChatAction(chatId, 'typing');
 
   try {
-    // Usa IA para interpretar a mensagem
-    const parsed = await parseTransactionMessage(text);
+    const parsed = await parseTransactionMessage(ADMIN_USER_ID, text);
 
     if (!parsed) {
       await bot.sendMessage(
@@ -63,15 +61,13 @@ export async function handleMessage(bot: TelegramBot, msg: TelegramBot.Message):
       return;
     }
 
-    // Busca a categoria correspondente
-    const category = await findBestCategoryMatch(parsed.category, parsed.type);
+    const category = await findBestCategoryMatch(ADMIN_USER_ID, parsed.category, parsed.type);
 
     if (!category) {
       await bot.sendMessage(chatId, '❌ Categoria nao encontrada. Tente novamente.');
       return;
     }
 
-    // Formata a mensagem de confirmacao
     const typeLabel = parsed.type === 'income' ? 'Receita' : 'Despesa';
     const typeIcon = parsed.type === 'income' ? '📈' : '📉';
 
@@ -89,7 +85,6 @@ ${typeIcon} *${typeLabel}:* ${formatCurrency(parsed.amount)}
       reply_markup: getConfirmTransactionKeyboard(),
     });
 
-    // Armazena a transacao pendente
     pendingTransactions.set(chatId, {
       parsed,
       categoryId: category.id,
@@ -110,8 +105,7 @@ export async function confirmTransaction(bot: TelegramBot, chatId: number): Prom
   }
 
   try {
-    // Cria a transacao no banco
-    const transactionId = await createTransaction({
+    await createTransaction(ADMIN_USER_ID, {
       type: pending.parsed.type,
       amount: pending.parsed.amount,
       description: pending.parsed.description,
@@ -120,7 +114,6 @@ export async function confirmTransaction(bot: TelegramBot, chatId: number): Prom
       source: 'telegram',
     });
 
-    // Limpa a transacao pendente
     pendingTransactions.delete(chatId);
 
     return true;

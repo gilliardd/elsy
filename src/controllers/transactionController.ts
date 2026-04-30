@@ -9,9 +9,10 @@ import {
 
 export async function listTransactions(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { type, startDate, endDate, category_id, limit } = req.query;
 
-    const transactions = await getTransactions({
+    const transactions = await getTransactions(userId, {
       type: type as 'income' | 'expense' | undefined,
       startDate: startDate as string | undefined,
       endDate: endDate as string | undefined,
@@ -28,8 +29,9 @@ export async function listTransactions(req: Request, res: Response): Promise<voi
 
 export async function getTransaction(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    const transaction = await getTransactionById(parseInt(id));
+    const transaction = await getTransactionById(userId, parseInt(id));
 
     if (!transaction) {
       res.status(404).json({ success: false, error: 'Transacao nao encontrada' });
@@ -45,6 +47,7 @@ export async function getTransaction(req: Request, res: Response): Promise<void>
 
 export async function addTransaction(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { type, amount, description, category_id, date, notes, source } = req.body;
 
     if (!type || !amount || !category_id || !date) {
@@ -52,7 +55,7 @@ export async function addTransaction(req: Request, res: Response): Promise<void>
       return;
     }
 
-    const id = await createTransaction({
+    const id = await createTransaction(userId, {
       type,
       amount,
       description,
@@ -71,13 +74,14 @@ export async function addTransaction(req: Request, res: Response): Promise<void>
 
 export async function getSummary(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.query;
 
     const now = new Date();
     const y = year ? parseInt(year as string) : now.getFullYear();
     const m = month ? parseInt(month as string) : now.getMonth() + 1;
 
-    const summary = await getMonthSummary(y, m);
+    const summary = await getMonthSummary(userId, y, m);
 
     res.json({ success: true, data: summary });
   } catch (error) {
@@ -88,8 +92,9 @@ export async function getSummary(req: Request, res: Response): Promise<void> {
 
 export async function getRecent(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { limit } = req.query;
-    const transactions = await getRecentTransactions(limit ? parseInt(limit as string) : 10);
+    const transactions = await getRecentTransactions(userId, limit ? parseInt(limit as string) : 10);
 
     res.json({ success: true, data: transactions });
   } catch (error) {

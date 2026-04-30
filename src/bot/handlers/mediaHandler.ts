@@ -5,9 +5,8 @@ import { formatCurrency, formatDate } from '../../utils/formatters';
 import { getConfirmTransactionKeyboard } from '../keyboards/inlineKeyboards';
 import { setPendingTransaction } from './messageHandler';
 
-// =====================================================
-// HANDLER DE MENSAGENS DE VOZ/AUDIO
-// =====================================================
+// FASE 1: hardcoded no admin. Sera refeito na Fase 3 (WhatsApp + auth por numero).
+const ADMIN_USER_ID = 1;
 
 export async function handleVoiceMessage(bot: TelegramBot, msg: TelegramBot.Message): Promise<void> {
   const chatId = msg.chat.id;
@@ -15,7 +14,6 @@ export async function handleVoiceMessage(bot: TelegramBot, msg: TelegramBot.Mess
 
   if (!voice) return;
 
-  // Limite de 1 minuto de audio
   if (voice.duration > 60) {
     await bot.sendMessage(chatId, '⚠️ Audio muito longo. Envie audios de ate 1 minuto.');
     return;
@@ -25,12 +23,10 @@ export async function handleVoiceMessage(bot: TelegramBot, msg: TelegramBot.Mess
   await bot.sendChatAction(chatId, 'typing');
 
   try {
-    // Baixa o arquivo de audio
     const fileLink = await bot.getFileLink(voice.file_id);
     const response = await fetch(fileLink);
     const audioBuffer = Buffer.from(await response.arrayBuffer());
 
-    // Transcreve o audio
     const transcription = await transcribeAudio(audioBuffer, 'voice.ogg');
 
     if (!transcription) {
@@ -40,8 +36,7 @@ export async function handleVoiceMessage(bot: TelegramBot, msg: TelegramBot.Mess
 
     await bot.sendMessage(chatId, `📝 Entendi: "${transcription}"\n\nProcessando...`);
 
-    // Processa a transcrição como se fosse uma mensagem de texto
-    const parsed = await parseTransactionMessage(transcription);
+    const parsed = await parseTransactionMessage(ADMIN_USER_ID, transcription);
 
     if (!parsed) {
       await bot.sendMessage(
@@ -51,15 +46,13 @@ export async function handleVoiceMessage(bot: TelegramBot, msg: TelegramBot.Mess
       return;
     }
 
-    // Busca a categoria correspondente
-    const category = await findBestCategoryMatch(parsed.category, parsed.type);
+    const category = await findBestCategoryMatch(ADMIN_USER_ID, parsed.category, parsed.type);
 
     if (!category) {
       await bot.sendMessage(chatId, '❌ Categoria nao encontrada. Tente novamente.');
       return;
     }
 
-    // Formata a mensagem de confirmacao
     const typeLabel = parsed.type === 'income' ? 'Receita' : 'Despesa';
     const typeIcon = parsed.type === 'income' ? '📈' : '📉';
 
@@ -79,7 +72,6 @@ Confirma o lancamento?
       reply_markup: getConfirmTransactionKeyboard(),
     });
 
-    // Armazena a transacao pendente (usa o armazenamento compartilhado)
     setPendingTransaction(chatId, {
       parsed,
       categoryId: category.id,
@@ -92,31 +84,24 @@ Confirma o lancamento?
   }
 }
 
-// =====================================================
-// HANDLER DE FOTOS/COMPROVANTES
-// =====================================================
-
 export async function handlePhotoMessage(bot: TelegramBot, msg: TelegramBot.Message): Promise<void> {
   const chatId = msg.chat.id;
   const photos = msg.photo;
 
   if (!photos || photos.length === 0) return;
 
-  // Pega a foto de maior resolucao (ultima do array)
   const photo = photos[photos.length - 1];
 
   await bot.sendMessage(chatId, '🔍 Analisando comprovante...');
   await bot.sendChatAction(chatId, 'typing');
 
   try {
-    // Baixa a imagem
     const fileLink = await bot.getFileLink(photo.file_id);
     const response = await fetch(fileLink);
     const imageBuffer = Buffer.from(await response.arrayBuffer());
     const imageBase64 = imageBuffer.toString('base64');
 
-    // Analisa a imagem com Vision
-    const parsed = await parseReceiptImage(imageBase64);
+    const parsed = await parseReceiptImage(ADMIN_USER_ID, imageBase64);
 
     if (!parsed) {
       await bot.sendMessage(
@@ -126,15 +111,13 @@ export async function handlePhotoMessage(bot: TelegramBot, msg: TelegramBot.Mess
       return;
     }
 
-    // Busca a categoria correspondente
-    const category = await findBestCategoryMatch(parsed.category, parsed.type);
+    const category = await findBestCategoryMatch(ADMIN_USER_ID, parsed.category, parsed.type);
 
     if (!category) {
       await bot.sendMessage(chatId, '❌ Categoria nao encontrada. Tente novamente.');
       return;
     }
 
-    // Formata a mensagem de confirmacao
     const typeLabel = parsed.type === 'income' ? 'Receita' : 'Despesa';
     const typeIcon = parsed.type === 'income' ? '📈' : '📉';
 
@@ -154,7 +137,6 @@ Confirma o lancamento?
       reply_markup: getConfirmTransactionKeyboard(),
     });
 
-    // Armazena a transacao pendente (usa o armazenamento compartilhado)
     setPendingTransaction(chatId, {
       parsed,
       categoryId: category.id,

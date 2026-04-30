@@ -1,14 +1,13 @@
 import { query } from '../config/database';
 import { ResultSetHeader } from 'mysql2';
 
-// Tipos de regras de orcamento
 export type BudgetRule = '50-30-20' | '60-20-20' | '40-30-30' | 'custom';
 
-// Categorias de orcamento
 export type BudgetCategory = 'necessidades' | 'estilo_vida' | 'futuro';
 
 export interface Budget {
   id: number;
+  user_id: number;
   year: number;
   month: number;
   rule: BudgetRule;
@@ -22,6 +21,7 @@ export interface Budget {
 
 export interface BudgetItem {
   id: number;
+  user_id: number;
   budget_id: number;
   category: BudgetCategory;
   name: string;
@@ -34,14 +34,12 @@ export interface BudgetWithItems extends Budget {
   items: BudgetItem[];
 }
 
-// Percentuais por regra
 export const BUDGET_RULES: Record<Exclude<BudgetRule, 'custom'>, { necessidades: number; estilo_vida: number; futuro: number }> = {
   '50-30-20': { necessidades: 50, estilo_vida: 30, futuro: 20 },
   '60-20-20': { necessidades: 60, estilo_vida: 20, futuro: 20 },
   '40-30-30': { necessidades: 40, estilo_vida: 30, futuro: 30 },
 };
 
-// Funcao helper para obter percentuais de um orcamento
 export function getBudgetPercentages(budget: Budget): { necessidades: number; estilo_vida: number; futuro: number } {
   if (budget.rule === 'custom') {
     return {
@@ -53,11 +51,14 @@ export function getBudgetPercentages(budget: Budget): { necessidades: number; es
   return BUDGET_RULES[budget.rule];
 }
 
-// Buscar orcamento por mes/ano
-export async function getBudgetByMonth(year: number, month: number): Promise<BudgetWithItems | null> {
+export async function getBudgetByMonth(
+  userId: number,
+  year: number,
+  month: number
+): Promise<BudgetWithItems | null> {
   const budgets = await query<Budget[]>(
-    'SELECT * FROM monthly_budgets WHERE year = ? AND month = ?',
-    [year, month]
+    'SELECT * FROM monthly_budgets WHERE user_id = ? AND year = ? AND month = ?',
+    [userId, year, month]
   );
 
   if (budgets.length === 0) {
@@ -66,34 +67,37 @@ export async function getBudgetByMonth(year: number, month: number): Promise<Bud
 
   const budget = budgets[0];
   const items = await query<BudgetItem[]>(
-    'SELECT * FROM monthly_budget_items WHERE budget_id = ? ORDER BY category, name',
-    [budget.id]
+    'SELECT * FROM monthly_budget_items WHERE user_id = ? AND budget_id = ? ORDER BY category, name',
+    [userId, budget.id]
   );
 
   return { ...budget, items };
 }
 
-// Buscar todos os orcamentos
-export async function getAllBudgets(): Promise<Budget[]> {
+export async function getAllBudgets(userId: number): Promise<Budget[]> {
   return query<Budget[]>(
-    'SELECT * FROM monthly_budgets ORDER BY year DESC, month DESC'
+    'SELECT * FROM monthly_budgets WHERE user_id = ? ORDER BY year DESC, month DESC',
+    [userId]
   );
 }
 
-// Criar orcamento
-export async function createBudget(data: {
-  year: number;
-  month: number;
-  rule: BudgetRule;
-  expected_income: number;
-  custom_necessidades?: number;
-  custom_estilo_vida?: number;
-  custom_futuro?: number;
-}): Promise<number> {
+export async function createBudget(
+  userId: number,
+  data: {
+    year: number;
+    month: number;
+    rule: BudgetRule;
+    expected_income: number;
+    custom_necessidades?: number;
+    custom_estilo_vida?: number;
+    custom_futuro?: number;
+  }
+): Promise<number> {
   const result = await query<ResultSetHeader>(
-    `INSERT INTO monthly_budgets (year, month, rule, expected_income, custom_necessidades, custom_estilo_vida, custom_futuro)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO monthly_budgets (user_id, year, month, rule, expected_income, custom_necessidades, custom_estilo_vida, custom_futuro)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      userId,
       data.year,
       data.month,
       data.rule,
@@ -106,8 +110,8 @@ export async function createBudget(data: {
   return result.insertId;
 }
 
-// Atualizar orcamento
 export async function updateBudget(
+  userId: number,
   id: number,
   data: {
     rule?: BudgetRule;
@@ -124,7 +128,6 @@ export async function updateBudget(
     fields.push('rule = ?');
     values.push(data.rule);
 
-    // Se mudou para custom, atualiza os percentuais
     if (data.rule === 'custom') {
       fields.push('custom_necessidades = ?');
       values.push(data.custom_necessidades || 0);
@@ -133,7 +136,6 @@ export async function updateBudget(
       fields.push('custom_futuro = ?');
       values.push(data.custom_futuro || 0);
     } else {
-      // Se mudou para regra fixa, limpa os percentuais customizados
       fields.push('custom_necessidades = NULL');
       fields.push('custom_estilo_vida = NULL');
       fields.push('custom_futuro = NULL');
@@ -146,33 +148,43 @@ export async function updateBudget(
 
   if (fields.length === 0) return;
 
-  values.push(id);
-  await query(`UPDATE monthly_budgets SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, values);
+  values.push(id, userId);
+  await query(
+    `UPDATE monthly_budgets SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+    values
+  );
 }
 
-// Deletar orcamento
-export async function deleteBudget(id: number): Promise<void> {
-  await query('DELETE FROM monthly_budget_items WHERE budget_id = ?', [id]);
-  await query('DELETE FROM monthly_budgets WHERE id = ?', [id]);
+export async function deleteBudget(userId: number, id: number): Promise<void> {
+  await query(
+    'DELETE FROM monthly_budget_items WHERE user_id = ? AND budget_id = ?',
+    [userId, id]
+  );
+  await query(
+    'DELETE FROM monthly_budgets WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
 }
 
-// Criar item de orcamento
-export async function createBudgetItem(data: {
-  budget_id: number;
-  category: BudgetCategory;
-  name: string;
-  planned_amount: number;
-}): Promise<number> {
+export async function createBudgetItem(
+  userId: number,
+  data: {
+    budget_id: number;
+    category: BudgetCategory;
+    name: string;
+    planned_amount: number;
+  }
+): Promise<number> {
   const result = await query<ResultSetHeader>(
-    `INSERT INTO monthly_budget_items (budget_id, category, name, planned_amount)
-     VALUES (?, ?, ?, ?)`,
-    [data.budget_id, data.category, data.name, data.planned_amount]
+    `INSERT INTO monthly_budget_items (user_id, budget_id, category, name, planned_amount)
+     VALUES (?, ?, ?, ?, ?)`,
+    [userId, data.budget_id, data.category, data.name, data.planned_amount]
   );
   return result.insertId;
 }
 
-// Atualizar item de orcamento
 export async function updateBudgetItem(
+  userId: number,
   id: number,
   data: {
     category?: BudgetCategory;
@@ -198,17 +210,21 @@ export async function updateBudgetItem(
 
   if (fields.length === 0) return;
 
-  values.push(id);
-  await query(`UPDATE monthly_budget_items SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, values);
+  values.push(id, userId);
+  await query(
+    `UPDATE monthly_budget_items SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ? AND user_id = ?`,
+    values
+  );
 }
 
-// Deletar item de orcamento
-export async function deleteBudgetItem(id: number): Promise<void> {
-  await query('DELETE FROM monthly_budget_items WHERE id = ?', [id]);
+export async function deleteBudgetItem(userId: number, id: number): Promise<void> {
+  await query(
+    'DELETE FROM monthly_budget_items WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
 }
 
-// Calcular resumo do orcamento
-export async function getBudgetSummary(budgetId: number): Promise<{
+export async function getBudgetSummary(userId: number, budgetId: number): Promise<{
   budget: Budget;
   byCategory: {
     category: BudgetCategory;
@@ -221,15 +237,18 @@ export async function getBudgetSummary(budgetId: number): Promise<{
     remaining: number;
   };
 }> {
-  const budgets = await query<Budget[]>('SELECT * FROM monthly_budgets WHERE id = ?', [budgetId]);
+  const budgets = await query<Budget[]>(
+    'SELECT * FROM monthly_budgets WHERE id = ? AND user_id = ?',
+    [budgetId, userId]
+  );
   if (budgets.length === 0) {
     throw new Error('Orcamento nao encontrado');
   }
 
   const budget = budgets[0];
   const items = await query<BudgetItem[]>(
-    'SELECT * FROM monthly_budget_items WHERE budget_id = ?',
-    [budgetId]
+    'SELECT * FROM monthly_budget_items WHERE user_id = ? AND budget_id = ?',
+    [userId, budgetId]
   );
 
   const ruleLimits = getBudgetPercentages(budget);
@@ -261,19 +280,19 @@ export async function getBudgetSummary(budgetId: number): Promise<{
   };
 }
 
-// Copiar orcamento de um mes anterior
 export async function copyBudgetFromPrevious(
+  userId: number,
   fromYear: number,
   fromMonth: number,
   toYear: number,
   toMonth: number
 ): Promise<number | null> {
-  const existingBudget = await getBudgetByMonth(fromYear, fromMonth);
+  const existingBudget = await getBudgetByMonth(userId, fromYear, fromMonth);
   if (!existingBudget) {
     return null;
   }
 
-  const newBudgetId = await createBudget({
+  const newBudgetId = await createBudget(userId, {
     year: toYear,
     month: toMonth,
     rule: existingBudget.rule,
@@ -284,7 +303,7 @@ export async function copyBudgetFromPrevious(
   });
 
   for (const item of existingBudget.items) {
-    await createBudgetItem({
+    await createBudgetItem(userId, {
       budget_id: newBudgetId,
       category: item.category,
       name: item.name,

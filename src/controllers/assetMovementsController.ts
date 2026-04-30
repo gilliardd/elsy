@@ -21,18 +21,20 @@ import { getAssetById } from '../models/Asset';
 
 export async function listMovements(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { asset_id, start_date, end_date } = req.query;
 
     let movements;
     if (asset_id) {
-      movements = await getMovementsByAsset(Number(asset_id));
+      movements = await getMovementsByAsset(userId, Number(asset_id));
     } else if (start_date && end_date) {
       movements = await getMovementsByDateRange(
+        userId,
         start_date as string,
         end_date as string
       );
     } else {
-      movements = await getAllMovements();
+      movements = await getAllMovements(userId);
     }
 
     res.json(movements);
@@ -44,8 +46,9 @@ export async function listMovements(req: Request, res: Response): Promise<void> 
 
 export async function getMovement(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    const movement = await getMovementById(Number(id));
+    const movement = await getMovementById(userId, Number(id));
 
     if (!movement) {
       res.status(404).json({ error: 'Movimento nao encontrado' });
@@ -61,9 +64,9 @@ export async function getMovement(req: Request, res: Response): Promise<void> {
 
 export async function create(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const data: CreateMovementData = req.body;
 
-    // Validations
     if (!data.asset_id || !data.date || !data.movement_type || !data.quantity || !data.price) {
       res.status(400).json({ error: 'Ativo, data, tipo, quantidade e preco sao obrigatorios' });
       return;
@@ -79,14 +82,13 @@ export async function create(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Check if asset exists
-    const asset = await getAssetById(data.asset_id);
+    const asset = await getAssetById(userId, data.asset_id);
     if (!asset) {
       res.status(400).json({ error: 'Ativo nao encontrado' });
       return;
     }
 
-    const movement = await createMovement(data);
+    const movement = await createMovement(userId, data);
     res.status(201).json(movement);
   } catch (error) {
     console.error('Erro ao criar movimento:', error);
@@ -96,25 +98,25 @@ export async function create(req: Request, res: Response): Promise<void> {
 
 export async function update(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const data: UpdateMovementData = req.body;
 
-    const existing = await getMovementById(Number(id));
+    const existing = await getMovementById(userId, Number(id));
     if (!existing) {
       res.status(404).json({ error: 'Movimento nao encontrado' });
       return;
     }
 
-    // Validate asset if changing
     if (data.asset_id) {
-      const asset = await getAssetById(data.asset_id);
+      const asset = await getAssetById(userId, data.asset_id);
       if (!asset) {
         res.status(400).json({ error: 'Ativo nao encontrado' });
         return;
       }
     }
 
-    const movement = await updateMovement(Number(id), data);
+    const movement = await updateMovement(userId, Number(id), data);
     res.json(movement);
   } catch (error) {
     console.error('Erro ao atualizar movimento:', error);
@@ -124,15 +126,16 @@ export async function update(req: Request, res: Response): Promise<void> {
 
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
 
-    const existing = await getMovementById(Number(id));
+    const existing = await getMovementById(userId, Number(id));
     if (!existing) {
       res.status(404).json({ error: 'Movimento nao encontrado' });
       return;
     }
 
-    await deleteMovement(Number(id));
+    await deleteMovement(userId, Number(id));
     res.json({ message: 'Movimento removido com sucesso' });
   } catch (error) {
     console.error('Erro ao remover movimento:', error);
@@ -142,6 +145,7 @@ export async function remove(req: Request, res: Response): Promise<void> {
 
 export async function updateCurrentPrice(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { assetId } = req.params;
     const { current_price } = req.body;
 
@@ -150,7 +154,7 @@ export async function updateCurrentPrice(req: Request, res: Response): Promise<v
       return;
     }
 
-    await updateAllCurrentPrices(Number(assetId), current_price);
+    await updateAllCurrentPrices(userId, Number(assetId), current_price);
     res.json({ message: 'Precos atualizados com sucesso' });
   } catch (error) {
     console.error('Erro ao atualizar precos:', error);
@@ -160,8 +164,10 @@ export async function updateCurrentPrice(req: Request, res: Response): Promise<v
 
 export async function getSummary(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { start_date, end_date } = req.query;
     const summary = await getMovementsSummary(
+      userId,
       start_date as string | undefined,
       end_date as string | undefined
     );
@@ -174,15 +180,16 @@ export async function getSummary(req: Request, res: Response): Promise<void> {
 
 export async function getAnalytics(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { start_date, end_date } = req.query;
 
     const [summary, byMonth, byType, byAsset, purchasesByAsset, purchasesByCategory] = await Promise.all([
-      getMovementsSummary(start_date as string | undefined, end_date as string | undefined),
-      getProfitByMonth(start_date as string | undefined, end_date as string | undefined),
-      getProfitByType(start_date as string | undefined, end_date as string | undefined),
-      getProfitByAsset(start_date as string | undefined, end_date as string | undefined),
-      getPurchasesByAsset(start_date as string | undefined, end_date as string | undefined),
-      getPurchasesByCategory(start_date as string | undefined, end_date as string | undefined),
+      getMovementsSummary(userId, start_date as string | undefined, end_date as string | undefined),
+      getProfitByMonth(userId, start_date as string | undefined, end_date as string | undefined),
+      getProfitByType(userId, start_date as string | undefined, end_date as string | undefined),
+      getProfitByAsset(userId, start_date as string | undefined, end_date as string | undefined),
+      getPurchasesByAsset(userId, start_date as string | undefined, end_date as string | undefined),
+      getPurchasesByCategory(userId, start_date as string | undefined, end_date as string | undefined),
     ]);
 
     res.json({

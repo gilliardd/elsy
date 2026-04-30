@@ -5,17 +5,16 @@ import { getAllSavingsBoxes, getTotalSaved } from '../models/SavingsBox';
 
 export async function getDashboard(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { startDate: queryStartDate, endDate: queryEndDate } = req.query;
 
     let startDate: string;
     let endDate: string;
 
     if (queryStartDate && queryEndDate) {
-      // Usa as datas fornecidas
       startDate = queryStartDate as string;
       endDate = queryEndDate as string;
     } else {
-      // Usa o mes atual como padrao
       const now = new Date();
       const year = now.getFullYear();
       const month = now.getMonth() + 1;
@@ -23,27 +22,22 @@ export async function getDashboard(req: Request, res: Response): Promise<void> {
       endDate = new Date(year, month, 0).toISOString().split('T')[0];
     }
 
-    // Resumo do periodo
-    const summary = await getDateRangeSummary(startDate, endDate);
+    const summary = await getDateRangeSummary(userId, startDate, endDate);
+    const recentTransactions = await getRecentTransactionsByDateRange(userId, startDate, endDate, 10);
 
-    // Ultimas transacoes do periodo
-    const recentTransactions = await getRecentTransactionsByDateRange(startDate, endDate, 10);
-
-    // Gastos por categoria do periodo
     const expensesByCategory = await query<{ category: string; total: number; color: string }[]>(
       `SELECT c.name as category, c.color, COALESCE(SUM(t.amount), 0) as total
        FROM categories c
-       LEFT JOIN transactions t ON t.category_id = c.id AND t.type = 'expense' AND t.date BETWEEN ? AND ?
-       WHERE c.type = 'expense' AND c.is_active = true
+       LEFT JOIN transactions t ON t.category_id = c.id AND t.user_id = ? AND t.type = 'expense' AND t.date BETWEEN ? AND ?
+       WHERE c.user_id = ? AND c.type = 'expense' AND c.is_active = true
        GROUP BY c.id, c.name, c.color
        HAVING total > 0
        ORDER BY total DESC`,
-      [startDate, endDate]
+      [userId, startDate, endDate, userId]
     );
 
-    // Caixinhas (savings boxes)
-    const savingsBoxes = await getAllSavingsBoxes();
-    const totalSaved = await getTotalSaved();
+    const savingsBoxes = await getAllSavingsBoxes(userId);
+    const totalSaved = await getTotalSaved(userId);
 
     res.json({
       success: true,

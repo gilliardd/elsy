@@ -13,8 +13,9 @@ import {
 
 export async function listSavingsBoxes(req: Request, res: Response): Promise<void> {
   try {
-    const boxes = await getAllSavingsBoxes();
-    const total = await getTotalSaved();
+    const userId = req.userId!;
+    const boxes = await getAllSavingsBoxes(userId);
+    const total = await getTotalSaved(userId);
     res.json({ success: true, data: { boxes, total } });
   } catch (error) {
     console.error('Erro ao listar caixinhas:', error);
@@ -24,15 +25,16 @@ export async function listSavingsBoxes(req: Request, res: Response): Promise<voi
 
 export async function getSavingsBox(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    const box = await getSavingsBoxById(parseInt(id));
+    const box = await getSavingsBoxById(userId, parseInt(id));
 
     if (!box) {
       res.status(404).json({ success: false, error: 'Caixinha nao encontrada' });
       return;
     }
 
-    const transactions = await getBoxTransactions(box.id, 10);
+    const transactions = await getBoxTransactions(userId, box.id, 10);
     res.json({ success: true, data: { box, transactions } });
   } catch (error) {
     console.error('Erro ao buscar caixinha:', error);
@@ -42,6 +44,7 @@ export async function getSavingsBox(req: Request, res: Response): Promise<void> 
 
 export async function addSavingsBox(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { name, description, goal_amount, icon, color } = req.body;
 
     if (!name) {
@@ -49,13 +52,13 @@ export async function addSavingsBox(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const existing = await getSavingsBoxByName(name);
+    const existing = await getSavingsBoxByName(userId, name);
     if (existing) {
       res.status(400).json({ success: false, error: 'Ja existe uma caixinha com esse nome' });
       return;
     }
 
-    const id = await createSavingsBox({ name, description, goal_amount, icon, color });
+    const id = await createSavingsBox(userId, { name, description, goal_amount, icon, color });
     res.status(201).json({ success: true, data: { id } });
   } catch (error) {
     console.error('Erro ao criar caixinha:', error);
@@ -65,6 +68,7 @@ export async function addSavingsBox(req: Request, res: Response): Promise<void> 
 
 export async function depositToBox(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const { amount, description } = req.body;
 
@@ -73,8 +77,8 @@ export async function depositToBox(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    await deposit(parseInt(id), amount, description);
-    const box = await getSavingsBoxById(parseInt(id));
+    await deposit(userId, parseInt(id), amount, description);
+    const box = await getSavingsBoxById(userId, parseInt(id));
 
     res.json({ success: true, data: box });
   } catch (error: any) {
@@ -85,6 +89,7 @@ export async function depositToBox(req: Request, res: Response): Promise<void> {
 
 export async function withdrawFromBox(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const { amount, description } = req.body;
 
@@ -93,8 +98,8 @@ export async function withdrawFromBox(req: Request, res: Response): Promise<void
       return;
     }
 
-    await withdraw(parseInt(id), amount, description);
-    const box = await getSavingsBoxById(parseInt(id));
+    await withdraw(userId, parseInt(id), amount, description);
+    const box = await getSavingsBoxById(userId, parseInt(id));
 
     res.json({ success: true, data: box });
   } catch (error: any) {
@@ -105,8 +110,9 @@ export async function withdrawFromBox(req: Request, res: Response): Promise<void
 
 export async function removeSavingsBox(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    await deleteSavingsBox(parseInt(id));
+    await deleteSavingsBox(userId, parseInt(id));
     res.json({ success: true });
   } catch (error) {
     console.error('Erro ao excluir caixinha:', error);

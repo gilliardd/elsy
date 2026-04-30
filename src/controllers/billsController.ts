@@ -13,8 +13,9 @@ import { createTransaction } from '../models/Transaction';
 
 export async function list(req: Request, res: Response): Promise<void> {
   try {
-    const bills = await getAllBills();
-    const total = await getMonthlyBillsTotal();
+    const userId = req.userId!;
+    const bills = await getAllBills(userId);
+    const total = await getMonthlyBillsTotal(userId);
     res.json({ success: true, data: { bills, total } });
   } catch (error) {
     console.error('Erro ao listar contas:', error);
@@ -24,8 +25,9 @@ export async function list(req: Request, res: Response): Promise<void> {
 
 export async function getById(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    const bill = await getBillById(Number(id));
+    const bill = await getBillById(userId, Number(id));
 
     if (!bill) {
       res.status(404).json({ success: false, error: 'Conta nao encontrada' });
@@ -41,6 +43,7 @@ export async function getById(req: Request, res: Response): Promise<void> {
 
 export async function create(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { name, description, amount, due_day, category_id, is_recurring, repeat_months, reminder_days_before } = req.body;
 
     if (!name || !amount || !due_day) {
@@ -53,7 +56,7 @@ export async function create(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const id = await createBill({
+    const id = await createBill(userId, {
       name,
       description,
       amount: Number(amount),
@@ -73,10 +76,11 @@ export async function create(req: Request, res: Response): Promise<void> {
 
 export async function update(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const { name, description, amount, due_day, category_id, is_recurring, repeat_months, reminder_days_before } = req.body;
 
-    const bill = await getBillById(Number(id));
+    const bill = await getBillById(userId, Number(id));
     if (!bill) {
       res.status(404).json({ success: false, error: 'Conta nao encontrada' });
       return;
@@ -87,7 +91,7 @@ export async function update(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    await updateBill(Number(id), {
+    await updateBill(userId, Number(id), {
       name,
       description,
       amount: amount !== undefined ? Number(amount) : undefined,
@@ -107,15 +111,16 @@ export async function update(req: Request, res: Response): Promise<void> {
 
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
 
-    const bill = await getBillById(Number(id));
+    const bill = await getBillById(userId, Number(id));
     if (!bill) {
       res.status(404).json({ success: false, error: 'Conta nao encontrada' });
       return;
     }
 
-    await deleteBill(Number(id));
+    await deleteBill(userId, Number(id));
     res.json({ success: true });
   } catch (error) {
     console.error('Erro ao excluir conta:', error);
@@ -125,20 +130,21 @@ export async function remove(req: Request, res: Response): Promise<void> {
 
 export async function markPaid(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const { date } = req.body;
 
-    const bill = await getBillById(Number(id));
+    const bill = await getBillById(userId, Number(id));
     if (!bill) {
       res.status(404).json({ success: false, error: 'Conta nao encontrada' });
       return;
     }
 
     const paidDate = date || new Date().toISOString().split('T')[0];
-    await markBillAsPaid(Number(id), paidDate);
+    await markBillAsPaid(userId, Number(id), paidDate);
 
     // Cria transacao de despesa automaticamente
-    await createTransaction({
+    await createTransaction(userId, {
       type: 'expense',
       amount: bill.amount,
       description: bill.name,
@@ -157,8 +163,9 @@ export async function markPaid(req: Request, res: Response): Promise<void> {
 
 export async function upcoming(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const days = req.query.days ? Number(req.query.days) : 7;
-    const bills = await getUpcomingBills(days);
+    const bills = await getUpcomingBills(userId, days);
     res.json({ success: true, data: bills });
   } catch (error) {
     console.error('Erro ao buscar contas proximas:', error);

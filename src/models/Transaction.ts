@@ -3,6 +3,7 @@ import { ResultSetHeader } from 'mysql2';
 
 export interface Transaction {
   id: number;
+  user_id: number;
   type: 'income' | 'expense';
   amount: number;
   description: string | null;
@@ -10,7 +11,7 @@ export interface Transaction {
   date: Date;
   notes: string | null;
   source: string;
-  telegram_message_id: number | null;
+  external_message_id: number | null;
   is_recurring: boolean;
   recurring_frequency: 'daily' | 'weekly' | 'monthly' | 'yearly' | null;
   created_at: Date;
@@ -25,14 +26,15 @@ export interface CreateTransactionDTO {
   date: string;
   notes?: string;
   source?: string;
-  telegram_message_id?: number;
+  external_message_id?: number;
 }
 
-export async function createTransaction(data: CreateTransactionDTO): Promise<number> {
+export async function createTransaction(userId: number, data: CreateTransactionDTO): Promise<number> {
   const result = await query<ResultSetHeader>(
-    `INSERT INTO transactions (type, amount, description, category_id, date, notes, source, telegram_message_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO transactions (user_id, type, amount, description, category_id, date, notes, source, external_message_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      userId,
       data.type,
       data.amount,
       data.description || null,
@@ -40,26 +42,32 @@ export async function createTransaction(data: CreateTransactionDTO): Promise<num
       data.date,
       data.notes || null,
       data.source || 'manual',
-      data.telegram_message_id || null,
+      data.external_message_id || null,
     ]
   );
   return result.insertId;
 }
 
-export async function getTransactionById(id: number): Promise<Transaction | null> {
-  const rows = await query<Transaction[]>('SELECT * FROM transactions WHERE id = ?', [id]);
+export async function getTransactionById(userId: number, id: number): Promise<Transaction | null> {
+  const rows = await query<Transaction[]>(
+    'SELECT * FROM transactions WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
   return rows[0] || null;
 }
 
-export async function getTransactions(filters?: {
-  type?: 'income' | 'expense';
-  startDate?: string;
-  endDate?: string;
-  category_id?: number;
-  limit?: number;
-}): Promise<Transaction[]> {
-  let sql = 'SELECT * FROM transactions WHERE 1=1';
-  const params: any[] = [];
+export async function getTransactions(
+  userId: number,
+  filters?: {
+    type?: 'income' | 'expense';
+    startDate?: string;
+    endDate?: string;
+    category_id?: number;
+    limit?: number;
+  }
+): Promise<Transaction[]> {
+  let sql = 'SELECT * FROM transactions WHERE user_id = ?';
+  const params: any[] = [userId];
 
   if (filters?.type) {
     sql += ' AND type = ?';
@@ -91,7 +99,7 @@ export async function getTransactions(filters?: {
   return query<Transaction[]>(sql, params);
 }
 
-export async function getMonthSummary(year: number, month: number): Promise<{
+export async function getMonthSummary(userId: number, year: number, month: number): Promise<{
   income: number;
   expense: number;
   balance: number;
@@ -100,13 +108,15 @@ export async function getMonthSummary(year: number, month: number): Promise<{
   const endDate = new Date(year, month, 0).toISOString().split('T')[0];
 
   const incomeResult = await query<{ total: number }[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'income' AND date BETWEEN ? AND ?`,
-    [startDate, endDate]
+    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+     WHERE user_id = ? AND type = 'income' AND date BETWEEN ? AND ?`,
+    [userId, startDate, endDate]
   );
 
   const expenseResult = await query<{ total: number }[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'expense' AND date BETWEEN ? AND ?`,
-    [startDate, endDate]
+    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+     WHERE user_id = ? AND type = 'expense' AND date BETWEEN ? AND ?`,
+    [userId, startDate, endDate]
   );
 
   const income = Number(incomeResult[0]?.total || 0);
@@ -119,30 +129,40 @@ export async function getMonthSummary(year: number, month: number): Promise<{
   };
 }
 
-export async function getRecentTransactions(limit: number = 10): Promise<(Transaction & { category_name: string })[]> {
+export async function getRecentTransactions(
+  userId: number,
+  limit: number = 10
+): Promise<(Transaction & { category_name: string })[]> {
   return query<(Transaction & { category_name: string })[]>(
     `SELECT t.*, c.name as category_name
      FROM transactions t
      JOIN categories c ON t.category_id = c.id
+     WHERE t.user_id = ?
      ORDER BY t.date DESC, t.created_at DESC
      LIMIT ?`,
-    [limit]
+    [userId, limit]
   );
 }
 
-export async function getDateRangeSummary(startDate: string, endDate: string): Promise<{
+export async function getDateRangeSummary(
+  userId: number,
+  startDate: string,
+  endDate: string
+): Promise<{
   income: number;
   expense: number;
   balance: number;
 }> {
   const incomeResult = await query<{ total: number }[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'income' AND date BETWEEN ? AND ?`,
-    [startDate, endDate]
+    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+     WHERE user_id = ? AND type = 'income' AND date BETWEEN ? AND ?`,
+    [userId, startDate, endDate]
   );
 
   const expenseResult = await query<{ total: number }[]>(
-    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions WHERE type = 'expense' AND date BETWEEN ? AND ?`,
-    [startDate, endDate]
+    `SELECT COALESCE(SUM(amount), 0) as total FROM transactions
+     WHERE user_id = ? AND type = 'expense' AND date BETWEEN ? AND ?`,
+    [userId, startDate, endDate]
   );
 
   const income = Number(incomeResult[0]?.total || 0);
@@ -156,6 +176,7 @@ export async function getDateRangeSummary(startDate: string, endDate: string): P
 }
 
 export async function getRecentTransactionsByDateRange(
+  userId: number,
   startDate: string,
   endDate: string,
   limit: number = 10
@@ -164,9 +185,9 @@ export async function getRecentTransactionsByDateRange(
     `SELECT t.*, c.name as category_name
      FROM transactions t
      JOIN categories c ON t.category_id = c.id
-     WHERE t.date BETWEEN ? AND ?
+     WHERE t.user_id = ? AND t.date BETWEEN ? AND ?
      ORDER BY t.date DESC, t.created_at DESC
      LIMIT ?`,
-    [startDate, endDate, limit]
+    [userId, startDate, endDate, limit]
   );
 }

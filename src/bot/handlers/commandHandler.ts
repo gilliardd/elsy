@@ -21,6 +21,9 @@ import { formatCurrency, formatDate } from '../../utils/formatters';
 import { getCurrentMonth, getMonthName, getDaysRemainingInMonth } from '../../utils/dateUtils';
 import { getMainMenuKeyboard } from '../keyboards/inlineKeyboards';
 
+// FASE 1: hardcoded no admin. Sera refeito na Fase 3 (WhatsApp + auth por numero).
+const ADMIN_USER_ID = 1;
+
 export async function handleStart(bot: TelegramBot, msg: TelegramBot.Message): Promise<void> {
   const chatId = msg.chat.id;
   console.log(`📱 /start recebido - Chat ID: ${chatId} | User: ${msg.chat.first_name || msg.chat.username}`);
@@ -113,7 +116,7 @@ export async function handleBalance(bot: TelegramBot, msg: TelegramBot.Message):
 
   try {
     const { year, month } = getCurrentMonth();
-    const summary = await getMonthSummary(year, month);
+    const summary = await getMonthSummary(ADMIN_USER_ID, year, month);
     const monthName = getMonthName(month);
 
     const balanceMessage = `
@@ -139,7 +142,7 @@ export async function handleSummary(bot: TelegramBot, msg: TelegramBot.Message):
 
   try {
     const { year, month } = getCurrentMonth();
-    const summary = await getMonthSummary(year, month);
+    const summary = await getMonthSummary(ADMIN_USER_ID, year, month);
     const monthName = getMonthName(month);
     const daysRemaining = getDaysRemainingInMonth();
 
@@ -168,7 +171,7 @@ export async function handleRecentTransactions(bot: TelegramBot, msg: TelegramBo
   const chatId = msg.chat.id;
 
   try {
-    const transactions = await getRecentTransactions(10);
+    const transactions = await getRecentTransactions(ADMIN_USER_ID, 10);
 
     if (transactions.length === 0) {
       await bot.sendMessage(chatId, '📝 Nenhuma transacao encontrada ainda.');
@@ -196,8 +199,8 @@ export async function handleCategories(bot: TelegramBot, msg: TelegramBot.Messag
   const chatId = msg.chat.id;
 
   try {
-    const expenseCategories = await getCategoriesByType('expense');
-    const incomeCategories = await getCategoriesByType('income');
+    const expenseCategories = await getCategoriesByType(ADMIN_USER_ID, 'expense');
+    const incomeCategories = await getCategoriesByType(ADMIN_USER_ID, 'income');
 
     let message = '📁 *Categorias Disponiveis:*\n\n';
 
@@ -226,8 +229,8 @@ export async function handleListSavingsBoxes(bot: TelegramBot, msg: TelegramBot.
   const chatId = msg.chat.id;
 
   try {
-    const boxes = await getAllSavingsBoxes();
-    const total = await getTotalSaved();
+    const boxes = await getAllSavingsBoxes(ADMIN_USER_ID);
+    const total = await getTotalSaved(ADMIN_USER_ID);
 
     if (boxes.length === 0) {
       await bot.sendMessage(
@@ -266,19 +269,18 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
   const chatId = msg.chat.id;
 
   try {
-    // Comando: criar caixinha NOME [meta VALOR]
     const createMatch = text.match(/criar\s+caixinha\s+(\w+)(?:\s+meta\s+(\d+(?:[.,]\d{2})?))?/i);
     if (createMatch) {
       const name = createMatch[1].toUpperCase();
       const goalAmount = createMatch[2] ? parseFloat(createMatch[2].replace(',', '.')) : 0;
 
-      const existing = await getSavingsBoxByName(name);
+      const existing = await getSavingsBoxByName(ADMIN_USER_ID, name);
       if (existing) {
         await bot.sendMessage(chatId, `❌ Ja existe uma caixinha chamada "${name}".`);
         return;
       }
 
-      await createSavingsBox({ name, goal_amount: goalAmount });
+      await createSavingsBox(ADMIN_USER_ID, { name, goal_amount: goalAmount });
       let message = `✅ Caixinha *${name}* criada com sucesso!`;
       if (goalAmount > 0) {
         message += `\n🎯 Meta: ${formatCurrency(goalAmount)}`;
@@ -287,13 +289,12 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
       return;
     }
 
-    // Comando: guardar/depositar/colocar VALOR na caixinha NOME
     const depositMatch = text.match(/(?:guardar|depositar|colocar)\s+(\d+(?:[.,]\d{2})?)\s+(?:na\s+)?(?:caixinha\s+)?(\w+)/i);
     if (depositMatch) {
       const amount = parseFloat(depositMatch[1].replace(',', '.'));
       const name = depositMatch[2].toUpperCase();
 
-      const box = await getSavingsBoxByName(name);
+      const box = await getSavingsBoxByName(ADMIN_USER_ID, name);
       if (!box) {
         await bot.sendMessage(
           chatId,
@@ -302,7 +303,7 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
         return;
       }
 
-      await deposit(box.id, amount);
+      await deposit(ADMIN_USER_ID, box.id, amount);
       const newBalance = Number(box.current_amount) + amount;
 
       let message = `✅ *Deposito realizado!*\n\n`;
@@ -322,13 +323,12 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
       return;
     }
 
-    // Comando: retirar/tirar VALOR da caixinha NOME
     const withdrawMatch = text.match(/(?:retirar|tirar|sacar)\s+(\d+(?:[.,]\d{2})?)\s+(?:da\s+)?(?:caixinha\s+)?(\w+)/i);
     if (withdrawMatch) {
       const amount = parseFloat(withdrawMatch[1].replace(',', '.'));
       const name = withdrawMatch[2].toUpperCase();
 
-      const box = await getSavingsBoxByName(name);
+      const box = await getSavingsBoxByName(ADMIN_USER_ID, name);
       if (!box) {
         await bot.sendMessage(chatId, `❌ Caixinha "${name}" nao encontrada.`);
         return;
@@ -342,7 +342,7 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
         return;
       }
 
-      await withdraw(box.id, amount);
+      await withdraw(ADMIN_USER_ID, box.id, amount);
       const newBalance = Number(box.current_amount) - amount;
 
       const message = `✅ *Retirada realizada!*\n\n📦 Caixinha: *${box.name}*\n💸 Retirado: ${formatCurrency(amount)}\n💵 Novo saldo: ${formatCurrency(newBalance)}`;
@@ -350,12 +350,11 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
       return;
     }
 
-    // Comando: saldo caixinha NOME ou caixinha NOME
     const balanceMatch = text.match(/(?:saldo\s+)?(?:da\s+)?caixinha\s+(\w+)/i);
     if (balanceMatch) {
       const name = balanceMatch[1].toUpperCase();
 
-      const box = await getSavingsBoxByName(name);
+      const box = await getSavingsBoxByName(ADMIN_USER_ID, name);
       if (!box) {
         await bot.sendMessage(chatId, `❌ Caixinha "${name}" nao encontrada.`);
         return;
@@ -380,7 +379,6 @@ export async function handleSavingsBoxCommand(bot: TelegramBot, msg: TelegramBot
       return;
     }
 
-    // Se nenhum comando foi reconhecido, mostra ajuda
     await bot.sendMessage(
       chatId,
       `🐷 *Comandos de Caixinha:*\n\n` +
@@ -406,9 +404,9 @@ export async function handleListBills(bot: TelegramBot, msg: TelegramBot.Message
   const chatId = msg.chat.id;
 
   try {
-    const bills = await getAllBills();
-    const total = await getMonthlyBillsTotal();
-    const upcoming = await getUpcomingBills(7);
+    const bills = await getAllBills(ADMIN_USER_ID);
+    const total = await getMonthlyBillsTotal(ADMIN_USER_ID);
+    const upcoming = await getUpcomingBills(ADMIN_USER_ID, 7);
 
     if (bills.length === 0) {
       await bot.sendMessage(
@@ -421,7 +419,6 @@ export async function handleListBills(bot: TelegramBot, msg: TelegramBot.Message
 
     let message = '📋 *Suas Contas a Pagar:*\n\n';
 
-    // Contas proximas (7 dias)
     if (upcoming.length > 0) {
       message += '⚠️ *Proximas a vencer:*\n';
       for (const bill of upcoming) {
@@ -451,7 +448,6 @@ export async function handleBillCommand(bot: TelegramBot, msg: TelegramBot.Messa
   const chatId = msg.chat.id;
 
   try {
-    // Comando: criar/nova conta NOME VALOR vence dia X
     const createMatch = text.match(
       /(?:criar|nova|adicionar)\s+conta\s+(.+?)\s+(\d+(?:[.,]\d{2})?)\s+(?:vence\s+)?(?:dia\s+)?(\d{1,2})/i
     );
@@ -465,14 +461,13 @@ export async function handleBillCommand(bot: TelegramBot, msg: TelegramBot.Messa
         return;
       }
 
-      // Tenta encontrar categoria "Contas" para associar
       let categoryId: number | undefined;
-      const contasCategory = await getCategoryByName('Contas', 'expense');
+      const contasCategory = await getCategoryByName(ADMIN_USER_ID, 'Contas', 'expense');
       if (contasCategory) {
         categoryId = contasCategory.id;
       }
 
-      await createBill({
+      await createBill(ADMIN_USER_ID, {
         name,
         amount,
         due_day: dueDay,
@@ -494,23 +489,21 @@ export async function handleBillCommand(bot: TelegramBot, msg: TelegramBot.Messa
       return;
     }
 
-    // Comando: excluir/remover conta NOME
     const deleteMatch = text.match(/(?:excluir|remover|deletar)\s+conta\s+(.+)/i);
     if (deleteMatch) {
       const name = deleteMatch[1].toUpperCase().trim();
 
-      const bill = await getBillByName(name);
+      const bill = await getBillByName(ADMIN_USER_ID, name);
       if (!bill) {
         await bot.sendMessage(chatId, `❌ Conta "${name}" nao encontrada.`);
         return;
       }
 
-      await deleteBill(bill.id);
+      await deleteBill(ADMIN_USER_ID, bill.id);
       await bot.sendMessage(chatId, `✅ Conta "${bill.name}" excluida com sucesso.`);
       return;
     }
 
-    // Se nenhum comando foi reconhecido, mostra ajuda
     await bot.sendMessage(
       chatId,
       `📋 *Comandos de Contas a Pagar:*\n\n` +
