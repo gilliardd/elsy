@@ -15,6 +15,7 @@ import adminRouter from './admin';
 import publicRouter from './public';
 import subscriptionRouter from './subscription';
 import webhooksRouter from './webhooks';
+import businessRouter from './business';
 import { decodeAuth, requireUser } from '../middlewares/auth';
 
 const router = Router();
@@ -50,6 +51,9 @@ router.use('/admin', authenticatedLimiter, adminRouter);
 
 // Subscription (autenticado)
 router.use('/subscription', authenticatedLimiter, subscriptionRouter);
+
+// Business (autenticado, exige account_type='business' por endpoint)
+router.use('/business', authenticatedLimiter, businessRouter);
 
 // Autenticados
 router.use('/transactions', requireUser, authenticatedLimiter, transactionsRouter);

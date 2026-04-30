@@ -6,6 +6,8 @@ export interface User {
   name: string;
   email: string | null;
   role: 'admin' | 'user' | 'viewer';
+  account_type?: 'personal' | 'business';
+  business_name?: string | null;
   can_create: boolean;
   can_edit: boolean;
   can_delete: boolean;

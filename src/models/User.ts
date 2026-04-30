@@ -2,6 +2,7 @@ import { query } from '../config/database';
 import { hashPasswordBcrypt, hashPasswordSha256, verifyPassword } from '../utils/password';
 
 export type UserRole = 'admin' | 'user' | 'viewer';
+export type AccountType = 'personal' | 'business';
 export type SubscriptionStatus =
   | 'incomplete'
   | 'trialing'
@@ -21,6 +22,9 @@ export interface User {
   email: string | null;
   phone_number: string | null;
   cpf: string | null;
+  account_type: AccountType;
+  business_name: string | null;
+  cnpj: string | null;
   phone_verified: boolean;
   email_verified: boolean;
   role: UserRole;
@@ -171,8 +175,21 @@ export interface CreateUserDTO {
   name: string;
   email: string;
   phone_number: string;
-  cpf: string;
   password: string;
+  account_type: AccountType;
+  // PF: cpf obrigatorio
+  cpf?: string;
+  // PJ: cnpj + business_name obrigatorios
+  cnpj?: string;
+  business_name?: string;
+}
+
+export async function getUserByCnpj(cnpj: string): Promise<User | null> {
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE cnpj = ? AND is_active = TRUE`,
+    [cnpj]
+  );
+  return rows[0] || null;
 }
 
 // Cria usuario novo (signup). Usa username = email para satisfazer a coluna
@@ -184,27 +201,40 @@ export async function createUser(data: CreateUserDTO): Promise<number> {
   if (await getUserByEmail(data.email)) {
     throw new Error('Email already in use');
   }
-  if (await getUserByCpf(data.cpf)) {
-    throw new Error('CPF already in use');
-  }
   if (await getUserByUsername(data.email)) {
     throw new Error('Username already in use');
   }
 
+  if (data.account_type === 'personal') {
+    if (!data.cpf) throw new Error('CPF required for personal account');
+    if (await getUserByCpf(data.cpf)) {
+      throw new Error('CPF already in use');
+    }
+  } else {
+    if (!data.cnpj) throw new Error('CNPJ required for business account');
+    if (!data.business_name) throw new Error('Business name required');
+    if (await getUserByCnpj(data.cnpj)) {
+      throw new Error('CNPJ already in use');
+    }
+  }
+
   const result = await query<any>(
     `INSERT INTO users (username, password, password_algo, name, email,
-                        phone_number, cpf, role,
-                        can_create, can_edit, can_delete, subscription_status,
-                        phone_verified, email_verified)
-     VALUES (?, ?, 'bcrypt', ?, ?, ?, ?, 'user', TRUE, TRUE, FALSE,
-             'incomplete', FALSE, FALSE)`,
+                        phone_number, cpf, account_type, business_name, cnpj,
+                        role, can_create, can_edit, can_delete,
+                        subscription_status, phone_verified, email_verified)
+     VALUES (?, ?, 'bcrypt', ?, ?, ?, ?, ?, ?, ?, 'user',
+             TRUE, TRUE, FALSE, 'incomplete', FALSE, FALSE)`,
     [
       data.email,
       hashPasswordBcrypt(data.password),
       data.name,
       data.email,
       data.phone_number,
-      data.cpf,
+      data.cpf || null,
+      data.account_type,
+      data.business_name || null,
+      data.cnpj || null,
     ]
   );
   return result.insertId;

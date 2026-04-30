@@ -16,6 +16,11 @@ import {
 import { setSubscriptionStatus, getUserById } from '../models/User';
 import { getMessagingClient } from '../messaging';
 import { env } from '../config/env';
+import {
+  listReceivablesNeedingReminder,
+  setLastReminderAt,
+} from '../models/Receivable';
+import { setCollectReminderPending } from '../whatsapp/businessCommands';
 
 let interval: NodeJS.Timeout | null = null;
 
@@ -148,11 +153,63 @@ async function cleanupPendingActions(): Promise<void> {
   await query(`DELETE FROM pending_actions WHERE expires_at <= NOW()`);
 }
 
+// ------------------------------------------------------------
+// Lembretes de cobranca para PJ
+// Para cada recebivel pending vencido (ou vencendo hoje) sem reminder
+// hoje, envia mensagem perguntando se ja foi pago.
+// ------------------------------------------------------------
+function formatBRL(cents: number): string {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  }).format(cents / 100);
+}
+
+async function processReceivableReminders(): Promise<void> {
+  const ALLOWED = new Set(['admin', 'trialing', 'active', 'cortesia']);
+  const items = await listReceivablesNeedingReminder();
+  const today = new Date().toISOString().split('T')[0];
+  const client = getMessagingClient();
+
+  for (const r of items) {
+    if (!r.user_phone) continue;
+    if (!r.subscription_status || !ALLOWED.has(r.subscription_status)) continue;
+
+    const dueFmt = new Date(r.due_date).toLocaleDateString('pt-BR');
+    const isOverdue = r.due_date < today;
+    const header = isOverdue
+      ? `📢 *Recebivel vencido*\n\n`
+      : `📢 *Recebivel vence hoje*\n\n`;
+
+    const message =
+      header +
+      `👤 ${r.customer_name}\n` +
+      (r.description ? `📋 ${r.description}\n` : '') +
+      `💰 ${formatBRL(r.amount_cents)}\n` +
+      `📅 ${dueFmt}\n\n` +
+      `Ja recebeu?\n` +
+      `*1* — Sim, recebi\n` +
+      `*2* — Ainda nao\n` +
+      `*3* — Vai pagar amanha`;
+
+    try {
+      await client.sendText(r.user_phone, message);
+      await setLastReminderAt(r.user_id, r.id, today);
+      await setCollectReminderPending(r.user_id, r.id);
+      // Pequeno delay
+      await new Promise((res) => setTimeout(res, 400));
+    } catch (err) {
+      console.error(`Erro enviando lembrete de recebivel ${r.id}:`, err);
+    }
+  }
+}
+
 export async function runSubscriptionMaintenance(): Promise<void> {
   try {
     await processTrialReminders();
     await processOverdue();
     await processCortesiaExpiration();
+    await processReceivableReminders();
     await cleanupPendingActions();
   } catch (err) {
     console.error('Erro no scheduler de assinaturas:', err);

@@ -5,7 +5,7 @@ import {
   setAsaasCustomerId,
   markTrialUsed,
 } from '../models/User';
-import { getPlanById, getAllPlans } from '../models/Plan';
+import { getPlanById, getAllPlans, getPlansForAccountType } from '../models/Plan';
 import {
   createSubscription as dbCreateSubscription,
   getActiveSubscriptionByUser,
@@ -27,10 +27,15 @@ function badRequest(res: Response, error: string) {
 }
 
 // ------------------------------------------------------------
-// GET /api/public/plans  (publico)
+// GET /api/public/plans?accountType=personal|business  (publico)
 // ------------------------------------------------------------
 export async function listPublicPlans(req: Request, res: Response): Promise<void> {
-  const plans = await getAllPlans(false);
+  const accountType = req.query.accountType as string | undefined;
+  const plans =
+    accountType === 'personal' || accountType === 'business'
+      ? await getPlansForAccountType(accountType)
+      : await getAllPlans(false);
+
   res.json({
     success: true,
     data: plans.map((p) => ({
@@ -39,6 +44,7 @@ export async function listPublicPlans(req: Request, res: Response): Promise<void
       description: p.description,
       price_cents: p.price_cents,
       trial_days: p.trial_days,
+      account_type: p.account_type,
       sort_order: p.sort_order,
     })),
   });
