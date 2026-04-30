@@ -1,7 +1,7 @@
 {
-  "name": "finbot",
+  "name": "elsy",
   "version": "1.0.0",
-  "description": "Bot Telegram para controle financeiro pessoal com IA",
+  "description": "Elsy — assistente financeira no WhatsApp (SaaS multi-tenant com Asaas)",
   "main": "dist/app.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
@@ -17,10 +17,12 @@
     "all": "npm run frontend:build && npm run dev"
   },
   "keywords": [
-    "telegram",
+    "whatsapp",
     "bot",
     "finance",
-    "openai"
+    "saas",
+    "openai",
+    "asaas"
   ],
   "author": "",
   "license": "ISC",

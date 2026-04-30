@@ -10,7 +10,7 @@ const adminApi = axios.create({
 // Injeta o token armazenado em localStorage
 adminApi.interceptors.request.use((config) => {
   try {
-    const stored = localStorage.getItem('finbot_auth');
+    const stored = localStorage.getItem('elsy_auth');
     if (stored) {
       const { token } = JSON.parse(stored);
       if (token) config.headers.Authorization = `Bearer ${token}`;
