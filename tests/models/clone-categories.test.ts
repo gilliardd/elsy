@@ -32,7 +32,7 @@ describe('cloneTemplateCategoriesToUser', () => {
     expect(calls.length).toBe(1);
 
     const { sql, params } = calls[0];
-    expect(sql).toContain('INSERT INTO categories');
+    expect(sql).toContain('INSERT IGNORE INTO categories');
     expect(sql).toContain('user_id IS NULL');
     expect(sql).toContain('is_active = true');
     expect(params).toEqual([99]);

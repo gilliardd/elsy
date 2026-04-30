@@ -126,10 +126,11 @@ export async function deleteCategory(userId: number, id: number): Promise<void> 
 }
 
 // Clona categorias template (user_id IS NULL) para um novo user_id.
-// Usado no signup e no script de bootstrap do admin.
+// Usado no signup e no script de bootstrap do admin. Usa INSERT IGNORE
+// para tolerar a presenca de duplicatas no destino sem quebrar o fluxo.
 export async function cloneTemplateCategoriesToUser(userId: number): Promise<void> {
   await query(
-    `INSERT INTO categories (user_id, name, type, icon, color, is_active)
+    `INSERT IGNORE INTO categories (user_id, name, type, icon, color, is_active)
      SELECT ?, name, type, icon, color, is_active
      FROM categories
      WHERE user_id IS NULL AND is_active = true`,
