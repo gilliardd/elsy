@@ -15,7 +15,9 @@ import {
   ChevronUp,
   ClipboardList,
   BarChart3,
+  Shield,
 } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 const menuItems = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -36,11 +38,13 @@ const investimentosSubmenus = [
 
 export default function Sidebar() {
   const location = useLocation();
+  const { user } = useAuth();
   const [investimentosOpen, setInvestimentosOpen] = useState(
     location.pathname.startsWith('/investimentos')
   );
 
   const isInvestimentosActive = location.pathname.startsWith('/investimentos');
+  const isAdmin = user?.role === 'admin';
 
   return (
     <aside className="w-64 bg-gray-900 text-white min-h-screen flex flex-col">
@@ -50,11 +54,23 @@ export default function Sidebar() {
             <Bot className="w-6 h-6" />
           </div>
           <div>
-            <h1 className="font-bold text-lg">FinBot</h1>
+            <h1 className="font-bold text-lg">Elsy</h1>
             <p className="text-xs text-gray-400">Controle Financeiro</p>
           </div>
         </div>
       </div>
+
+      {isAdmin && (
+        <div className="px-4 pt-3 pb-1">
+          <Link
+            to="/admin"
+            className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium"
+          >
+            <Shield className="w-4 h-4" />
+            Painel SaaS Admin
+          </Link>
+        </div>
+      )}
 
       <nav className="flex-1 p-4">
         <ul className="space-y-1">
@@ -149,12 +165,6 @@ export default function Sidebar() {
         </ul>
       </nav>
 
-      <div className="p-4 border-t border-gray-800">
-        <div className="bg-gray-800 rounded-lg p-3">
-          <p className="text-xs text-gray-400 mb-1">Bot Telegram</p>
-          <p className="text-sm font-medium text-green-400">@orfeu_financeiro_bot</p>
-        </div>
-      </div>
     </aside>
   );
 }

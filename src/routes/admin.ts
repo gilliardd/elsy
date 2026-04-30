@@ -16,6 +16,9 @@ import {
   setSystemConfig,
   deleteSystemConfig,
   getUserMessages,
+  getMetrics,
+  listPayments,
+  listMessages,
 } from '../controllers/adminController';
 
 const router = Router();
@@ -84,5 +87,12 @@ router.post('/users/:id/unblock', unblockUser);
 router.get('/system-config', getSystemConfig);
 router.put('/system-config/:key', setSystemConfig);
 router.delete('/system-config/:key', deleteSystemConfig);
+
+// ------------------------------------------------------------
+// Metricas e listas gerais (dashboard admin)
+// ------------------------------------------------------------
+router.get('/metrics', getMetrics);
+router.get('/payments', listPayments);
+router.get('/messages', listMessages);
 
 export default router;

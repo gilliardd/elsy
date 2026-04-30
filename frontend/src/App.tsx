@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import AdminProtectedRoute from './components/admin/AdminProtectedRoute';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Transactions from './pages/Transactions';
@@ -12,6 +13,14 @@ import Orcamentos from './pages/Orcamentos';
 import InvestCadastro from './pages/investments/Cadastro';
 import InvestMovimento from './pages/investments/Movimento';
 import InvestAnalise from './pages/investments/Analise';
+
+import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminUserDetail from './pages/admin/AdminUserDetail';
+import AdminPlans from './pages/admin/AdminPlans';
+import AdminPayments from './pages/admin/AdminPayments';
+import AdminMessages from './pages/admin/AdminMessages';
+import AdminSettings from './pages/admin/AdminSettings';
 
 function ComingSoon({ title }: { title: string }) {
   return (
@@ -50,6 +59,17 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
+
+          {/* Painel admin SaaS */}
+          <Route path="/admin" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />
+          <Route path="/admin/usuarios" element={<AdminProtectedRoute><AdminUsers /></AdminProtectedRoute>} />
+          <Route path="/admin/usuarios/:id" element={<AdminProtectedRoute><AdminUserDetail /></AdminProtectedRoute>} />
+          <Route path="/admin/planos" element={<AdminProtectedRoute><AdminPlans /></AdminProtectedRoute>} />
+          <Route path="/admin/pagamentos" element={<AdminProtectedRoute><AdminPayments /></AdminProtectedRoute>} />
+          <Route path="/admin/mensagens" element={<AdminProtectedRoute><AdminMessages /></AdminProtectedRoute>} />
+          <Route path="/admin/configuracoes" element={<AdminProtectedRoute><AdminSettings /></AdminProtectedRoute>} />
+
+          {/* App de financas pessoais (admin tambem usa) */}
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/transacoes" element={<ProtectedRoute><Transactions /></ProtectedRoute>} />
           <Route path="/categorias" element={<ProtectedRoute><Categories /></ProtectedRoute>} />

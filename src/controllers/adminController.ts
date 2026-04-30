@@ -253,3 +253,150 @@ export async function getUserMessages(req: Request, res: Response): Promise<void
   const messages = await getMessagesByUser(id, limit);
   res.json({ success: true, data: messages });
 }
+
+// ============================================================
+// METRICAS DO DASHBOARD ADMIN
+// ============================================================
+
+export async function getMetrics(req: Request, res: Response): Promise<void> {
+  // Contagem por subscription_status
+  const [byStatus, signups30d, churn30d, mrr] = await Promise.all([
+    query<{ subscription_status: string | null; total: number }[]>(
+      `SELECT subscription_status, COUNT(*) AS total
+       FROM users
+       WHERE is_active = TRUE
+       GROUP BY subscription_status`
+    ),
+    query<{ total: number }[]>(
+      `SELECT COUNT(*) AS total FROM users
+       WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         AND role = 'user'`
+    ),
+    query<{ total: number }[]>(
+      `SELECT COUNT(*) AS total FROM subscriptions
+       WHERE deleted_at IS NOT NULL
+         AND deleted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
+    ),
+    query<{ mrr_cents: number }[]>(
+      `SELECT COALESCE(SUM(p.price_cents), 0) AS mrr_cents
+       FROM subscriptions s
+       JOIN plans p ON s.plan_id = p.id
+       WHERE s.deleted_at IS NULL
+         AND s.status IN ('active', 'trialing')`
+    ),
+  ]);
+
+  // Normaliza contagens
+  const counts: Record<string, number> = {};
+  for (const row of byStatus) {
+    counts[row.subscription_status || 'none'] = Number(row.total);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      users: {
+        total: Object.values(counts).reduce((a, b) => a + b, 0),
+        admin: counts['admin'] || 0,
+        trialing: counts['trialing'] || 0,
+        active: counts['active'] || 0,
+        overdue: counts['overdue'] || 0,
+        blocked: counts['blocked'] || 0,
+        cortesia: counts['cortesia'] || 0,
+        cancelled: counts['cancelled'] || 0,
+        incomplete: counts['incomplete'] || 0,
+        none: counts['none'] || 0,
+      },
+      mrrCents: Number(mrr[0]?.mrr_cents || 0),
+      signupsLast30d: Number(signups30d[0]?.total || 0),
+      churnLast30d: Number(churn30d[0]?.total || 0),
+    },
+  });
+}
+
+// ============================================================
+// LISTAS GERAIS: pagamentos e mensagens
+// ============================================================
+
+export async function listPayments(req: Request, res: Response): Promise<void> {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const offset = Number(req.query.offset) || 0;
+  const status = req.query.status as string | undefined;
+
+  const where: string[] = ['1=1'];
+  const params: any[] = [];
+
+  if (status) {
+    where.push('p.status = ?');
+    params.push(status);
+  }
+
+  const whereSql = where.join(' AND ');
+
+  const totalRow = await query<{ total: number }[]>(
+    `SELECT COUNT(*) AS total FROM payments p WHERE ${whereSql}`,
+    params
+  );
+
+  const items = await query<any[]>(
+    `SELECT p.*, s.user_id, u.name AS user_name, u.phone_number
+     FROM payments p
+     JOIN subscriptions s ON p.subscription_id = s.id
+     JOIN users u ON s.user_id = u.id
+     WHERE ${whereSql}
+     ORDER BY p.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  res.json({
+    success: true,
+    data: { payments: items, total: Number(totalRow[0]?.total || 0), limit, offset },
+  });
+}
+
+export async function listMessages(req: Request, res: Response): Promise<void> {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const offset = Number(req.query.offset) || 0;
+  const direction = req.query.direction as string | undefined;
+  const phone = req.query.phone as string | undefined;
+  const userId = req.query.userId as string | undefined;
+
+  const where: string[] = ['1=1'];
+  const params: any[] = [];
+
+  if (direction) {
+    where.push('m.direction = ?');
+    params.push(direction);
+  }
+  if (phone) {
+    where.push('m.phone = ?');
+    params.push(phone);
+  }
+  if (userId) {
+    where.push('m.user_id = ?');
+    params.push(Number(userId));
+  }
+
+  const whereSql = where.join(' AND ');
+
+  const totalRow = await query<{ total: number }[]>(
+    `SELECT COUNT(*) AS total FROM message_logs m WHERE ${whereSql}`,
+    params
+  );
+
+  const items = await query<any[]>(
+    `SELECT m.*, u.name AS user_name
+     FROM message_logs m
+     LEFT JOIN users u ON m.user_id = u.id
+     WHERE ${whereSql}
+     ORDER BY m.id DESC
+     LIMIT ? OFFSET ?`,
+    [...params, limit, offset]
+  );
+
+  res.json({
+    success: true,
+    data: { messages: items, total: Number(totalRow[0]?.total || 0), limit, offset },
+  });
+}
