@@ -15,7 +15,10 @@ import {
 import { cloneTemplateCategoriesToUser } from '../models/Category';
 import { signToken } from '../utils/jwt';
 import { sendOtp, verifyOtp } from '../services/otpService';
-import { normalizePhoneBR, normalizeCpf, isValidEmail, isStrongPassword } from '../utils/validators';
+import { normalizePhoneBR, normalizeCpf, normalizeCnpj, isValidEmail, isStrongPassword } from '../utils/validators';
+import { sendWelcomeEmail, sendPasswordResetEmail } from '../services/notifications';
+import { generateOtpCode } from '../utils/otp';
+import { createOtp } from '../models/OtpCode';
 
 // ------------------------------------------------------------
 // Helpers
@@ -75,10 +78,13 @@ export async function userLogin(req: Request, res: Response): Promise<void> {
 // ------------------------------------------------------------
 
 export async function signup(req: Request, res: Response): Promise<void> {
-  const { name, email, phone, password, cpf } = req.body || {};
+  const { name, email, phone, password, accountType, cpf, cnpj, businessName } = req.body || {};
 
-  if (!name || !email || !phone || !password || !cpf) {
-    return badRequest(res, 'Nome, email, telefone, senha e CPF sao obrigatorios');
+  if (!name || !email || !phone || !password || !accountType) {
+    return badRequest(res, 'Nome, email, telefone, senha e tipo de conta sao obrigatorios');
+  }
+  if (!['personal', 'business'].includes(accountType)) {
+    return badRequest(res, 'accountType deve ser personal ou business');
   }
   if (!isValidEmail(email)) return badRequest(res, 'Email invalido');
   if (!isStrongPassword(password)) {
@@ -88,19 +94,43 @@ export async function signup(req: Request, res: Response): Promise<void> {
   const normalizedPhone = normalizePhoneBR(phone);
   if (!normalizedPhone) return badRequest(res, 'Telefone invalido');
 
-  const normalizedCpf = normalizeCpf(cpf);
-  if (!normalizedCpf) return badRequest(res, 'CPF invalido');
+  let normalizedCpf: string | undefined;
+  let normalizedCnpj: string | undefined;
+  let bizName: string | undefined;
+
+  if (accountType === 'personal') {
+    if (!cpf) return badRequest(res, 'CPF obrigatorio para conta pessoal');
+    const v = normalizeCpf(cpf);
+    if (!v) return badRequest(res, 'CPF invalido');
+    normalizedCpf = v;
+  } else {
+    if (!cnpj) return badRequest(res, 'CNPJ obrigatorio para conta PJ');
+    if (!businessName) return badRequest(res, 'Nome da empresa obrigatorio');
+    const v = normalizeCnpj(cnpj);
+    if (!v) return badRequest(res, 'CNPJ invalido');
+    normalizedCnpj = v;
+    bizName = String(businessName).trim();
+    if (bizName.length < 2) return badRequest(res, 'Nome da empresa invalido');
+  }
 
   try {
     const userId = await createUser({
       name,
       email: email.trim().toLowerCase(),
       phone_number: normalizedPhone,
-      cpf: normalizedCpf,
       password,
+      account_type: accountType,
+      cpf: normalizedCpf,
+      cnpj: normalizedCnpj,
+      business_name: bizName,
     } satisfies CreateUserDTO);
 
     await cloneTemplateCategoriesToUser(userId);
+
+    // Email de boas-vindas (best-effort — nao bloqueia)
+    sendWelcomeEmail(email, name).catch((err) =>
+      console.error('Erro enviando welcome email:', err)
+    );
 
     // Dispara OTP de verificacao
     const otp = await sendOtp(normalizedPhone, 'signup', { userId });
@@ -110,6 +140,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
       data: {
         userId,
         phone: normalizedPhone,
+        accountType,
         nextStep: 'verify_phone',
         otpCooldownMs: otp.ok ? 0 : otp.cooldownMs,
       },
@@ -119,6 +150,7 @@ export async function signup(req: Request, res: Response): Promise<void> {
     if (msg.includes('Phone already')) return badRequest(res, 'Telefone ja cadastrado');
     if (msg.includes('Email already')) return badRequest(res, 'Email ja cadastrado');
     if (msg.includes('CPF already')) return badRequest(res, 'CPF ja cadastrado');
+    if (msg.includes('CNPJ already')) return badRequest(res, 'CNPJ ja cadastrado');
     if (msg.includes('Username already')) return badRequest(res, 'Email ja cadastrado');
 
     console.error('Signup error:', err);
@@ -197,7 +229,25 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   const user = await getUserByPhone(normalized);
   // Resposta uniforme — nao expor se telefone existe ou nao
   if (user) {
-    await sendOtp(normalized, 'reset_password', { userId: user.id });
+    // Gera UM codigo, grava uma vez, envia pelos dois canais com o mesmo valor.
+    const code = generateOtpCode();
+    await createOtp(normalized, code, 'reset_password', { userId: user.id });
+
+    // WhatsApp
+    const { getMessagingClient } = await import('../messaging');
+    getMessagingClient()
+      .sendText(
+        normalized,
+        `📢 *Elsy*\n\nSeu codigo para redefinir a senha: *${code}*\nValido por 5 minutos.`
+      )
+      .catch((err) => console.error('Erro enviando reset OTP whatsapp:', err));
+
+    // Email com o mesmo codigo
+    if (user.email) {
+      sendPasswordResetEmail(user.email, user.name, code).catch((err) =>
+        console.error('Erro enviando reset email:', err)
+      );
+    }
   }
   res.json({ success: true });
 }

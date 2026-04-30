@@ -44,8 +44,8 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-full shadow-lg mb-4">
             <Wallet className="w-8 h-8 text-blue-600" />
           </div>
-          <h1 className="text-3xl font-bold text-white">FinBot</h1>
-          <p className="text-blue-200 mt-2">Gestao Financeira Pessoal</p>
+          <h1 className="text-3xl font-bold text-white">Elsy</h1>
+          <p className="text-blue-200 mt-2">Painel administrativo</p>
         </div>
 
         {/* Login Form */}
@@ -135,18 +135,10 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 pt-6 border-t border-gray-200">
-            <p className="text-center text-sm text-gray-500">
-              Usuario padrao: <span className="font-mono text-gray-700">admin</span>
-            </p>
-            <p className="text-center text-sm text-gray-500">
-              Senha padrao: <span className="font-mono text-gray-700">admin123</span>
-            </p>
-          </div>
         </div>
 
         <p className="text-center text-blue-200 text-sm mt-6">
-          FinBot - Controle suas financas com inteligencia
+          Elsy — assistente financeira no WhatsApp
         </p>
       </div>
     </div>

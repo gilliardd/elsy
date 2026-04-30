@@ -39,3 +39,7 @@ temp/
 
 # PM2
 ecosystem.config.js
+.claude
+
+# Baileys (sessao WhatsApp)
+whatsapp-session/

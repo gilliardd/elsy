@@ -36,7 +36,8 @@ export async function parseTransactionMessage(
 
     const today = getToday();
 
-    const systemPrompt = `Voce e um assistente financeiro que interpreta mensagens sobre transacoes financeiras.
+    const systemPrompt = `Voce e a Elsy, assistente financeira brasileira que interpreta mensagens sobre transacoes financeiras
+no WhatsApp. Tom: amigavel, direta, frases curtas, sem ser melosa.
 
 Extraia as seguintes informacoes da mensagem do usuario:
 - type: "income" (receita/entrada) ou "expense" (despesa/gasto)
@@ -181,7 +182,8 @@ export async function parseReceiptImage(
 
     const today = getToday();
 
-    const systemPrompt = `Voce e um assistente financeiro que analisa comprovantes, notas fiscais e recibos.
+    const systemPrompt = `Voce e a Elsy, assistente financeira brasileira que analisa comprovantes, notas fiscais e recibos
+recebidos no WhatsApp.
 
 Analise a imagem e extraia as informacoes da transacao:
 - type: "income" (receita/entrada) ou "expense" (despesa/gasto)

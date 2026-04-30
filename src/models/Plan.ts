@@ -1,12 +1,15 @@
 import { query } from '../config/database';
 import { ResultSetHeader } from 'mysql2';
 
+export type PlanAccountType = 'personal' | 'business' | 'any';
+
 export interface Plan {
   id: number;
   name: string;
   description: string | null;
   price_cents: number;
   trial_days: number;
+  account_type: PlanAccountType;
   asaas_billing_type: string;
   is_active: boolean;
   sort_order: number;
@@ -19,6 +22,7 @@ export interface CreatePlanDTO {
   description?: string;
   price_cents: number;
   trial_days: number;
+  account_type?: PlanAccountType;
   asaas_billing_type?: string;
   is_active?: boolean;
   sort_order?: number;
@@ -32,6 +36,19 @@ export async function getAllPlans(includeInactive = false): Promise<Plan[]> {
   );
 }
 
+// Filtra planos visiveis para o tipo de conta indicado.
+// account_type 'personal' ve planos personal+any; 'business' ve business+any.
+export async function getPlansForAccountType(
+  accountType: 'personal' | 'business'
+): Promise<Plan[]> {
+  return query<Plan[]>(
+    `SELECT * FROM plans
+     WHERE is_active = TRUE AND (account_type = ? OR account_type = 'any')
+     ORDER BY sort_order, id`,
+    [accountType]
+  );
+}
+
 export async function getPlanById(id: number): Promise<Plan | null> {
   const rows = await query<Plan[]>('SELECT * FROM plans WHERE id = ?', [id]);
   return rows[0] || null;
@@ -40,13 +57,14 @@ export async function getPlanById(id: number): Promise<Plan | null> {
 export async function createPlan(data: CreatePlanDTO): Promise<number> {
   const result = await query<ResultSetHeader>(
     `INSERT INTO plans (name, description, price_cents, trial_days,
-                        asaas_billing_type, is_active, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                        account_type, asaas_billing_type, is_active, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       data.name,
       data.description || null,
       data.price_cents,
       data.trial_days,
+      data.account_type || 'any',
       data.asaas_billing_type || 'CREDIT_CARD',
       data.is_active ?? true,
       data.sort_order ?? 0,
@@ -66,6 +84,7 @@ export async function updatePlan(
   if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description); }
   if (data.price_cents !== undefined) { fields.push('price_cents = ?'); values.push(data.price_cents); }
   if (data.trial_days !== undefined) { fields.push('trial_days = ?'); values.push(data.trial_days); }
+  if (data.account_type !== undefined) { fields.push('account_type = ?'); values.push(data.account_type); }
   if (data.asaas_billing_type !== undefined) { fields.push('asaas_billing_type = ?'); values.push(data.asaas_billing_type); }
   if (data.is_active !== undefined) { fields.push('is_active = ?'); values.push(data.is_active); }
   if (data.sort_order !== undefined) { fields.push('sort_order = ?'); values.push(data.sort_order); }

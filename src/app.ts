@@ -7,44 +7,35 @@ import { env, validateEnv } from './config/env';
 import { getPool } from './config/database';
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
-import { startBot, stopBot } from './bot';
+import { startWhatsApp, stopWhatsApp } from './whatsapp';
 import { ensureAdminExists } from './models/User';
+import { startSubscriptionScheduler, stopSubscriptionScheduler } from './services/subscriptionScheduler';
 
 async function main(): Promise<void> {
-  console.log('\n🚀 Iniciando FinBot...\n');
+  console.log('\n🚀 Iniciando Elsy...\n');
 
-  // Valida variaveis de ambiente
   validateEnv();
 
-  // Inicializa conexao com banco de dados
   try {
     await getPool();
-    // Garante que existe um usuario admin
     await ensureAdminExists();
   } catch (error) {
     console.error('❌ Falha ao conectar ao banco de dados. Verifique as configuracoes.');
     process.exit(1);
   }
 
-  // Cria app Express
   const app = express();
 
-  // Middlewares
-  app.use(helmet({
-    contentSecurityPolicy: false,
-  }));
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(cors());
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
 
-  // Rotas da API
   app.use('/api', routes);
 
-  // Servir arquivos estaticos do frontend (quando disponivel)
   const frontendPath = path.join(__dirname, '../frontend/dist');
   app.use(express.static(frontendPath));
 
-  // Fallback para SPA
   app.get('*', (req, res, next) => {
     if (req.path.startsWith('/api')) {
       return next();
@@ -52,33 +43,34 @@ async function main(): Promise<void> {
     res.sendFile(path.join(frontendPath, 'index.html'), (err) => {
       if (err) {
         res.status(200).json({
-          message: 'FinBot API esta rodando!',
+          message: 'Elsy API esta rodando',
           docs: '/api/health',
         });
       }
     });
   });
 
-  // Error handlers
   app.use(notFoundHandler);
   app.use(errorHandler);
 
-  // Inicia servidor HTTP
   const server = app.listen(env.port, () => {
     console.log(`\n🌐 Servidor rodando em http://localhost:${env.port}`);
     console.log(`📡 API disponivel em http://localhost:${env.port}/api`);
   });
 
-  // Inicia bot do Telegram
-  const bot = startBot();
-  if (bot) {
-    console.log('💬 Bot do Telegram ativo e aguardando mensagens\n');
-  }
+  // Inicia bot WhatsApp via Baileys (a conexao acontece em background;
+  // se ainda nao houver QR escaneado, o admin escaneia pelo painel).
+  await startWhatsApp();
+  console.log('💬 WhatsApp iniciado. Estado disponivel em /api/admin/whatsapp/status');
 
-  // Graceful shutdown
+  // Scheduler de manutencao de assinaturas (trial reminders, overdue, cortesia)
+  startSubscriptionScheduler();
+  console.log('');
+
   const shutdown = async () => {
     console.log('\n⏹️  Encerrando...');
-    stopBot();
+    stopSubscriptionScheduler();
+    await stopWhatsApp().catch(() => {});
     server.close();
     process.exit(0);
   };

@@ -6,6 +6,8 @@ export interface User {
   name: string;
   email: string | null;
   role: 'admin' | 'user' | 'viewer';
+  account_type?: 'personal' | 'business';
+  business_name?: string | null;
   can_create: boolean;
   can_edit: boolean;
   can_delete: boolean;
@@ -30,7 +32,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_STORAGE_KEY = 'finbot_auth';
+const AUTH_STORAGE_KEY = 'elsy_auth';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -79,7 +81,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function login(username: string, password: string) {
-    const response = await fetch('/api/auth/login', {
+    // Frontend atual atende apenas o admin. Login de usuario comum (telefone +
+    // senha) entra na Fase 5 com /admin/* segregado e fluxo proprio.
+    const response = await fetch('/api/auth/admin/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

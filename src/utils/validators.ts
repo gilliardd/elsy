@@ -64,6 +64,52 @@ export function normalizeCpf(input: string): string | null {
   return cpf;
 }
 
+// Valida CNPJ (algoritmo dos digitos verificadores).
+// Aceita string com ou sem mascara. Retorna o CNPJ apenas com digitos
+// se valido, ou null se invalido.
+export function normalizeCnpj(input: string): string | null {
+  if (!input) return null;
+  const cnpj = input.replace(/\D/g, '');
+
+  if (cnpj.length !== 14) return null;
+  if (/^(\d)\1{13}$/.test(cnpj)) return null;
+
+  const calcDigit = (slice: string, weights: number[]): number => {
+    let sum = 0;
+    for (let i = 0; i < slice.length; i++) {
+      sum += parseInt(slice[i], 10) * weights[i];
+    }
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+
+  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+
+  const d1 = calcDigit(cnpj.slice(0, 12), w1);
+  if (d1 !== parseInt(cnpj[12], 10)) return null;
+
+  const d2 = calcDigit(cnpj.slice(0, 13), w2);
+  if (d2 !== parseInt(cnpj[13], 10)) return null;
+
+  return cnpj;
+}
+
+// Tenta normalizar como CPF ou CNPJ. Retorna o tipo identificado.
+export function normalizeCpfOrCnpj(input: string): { value: string; type: 'cpf' | 'cnpj' } | null {
+  if (!input) return null;
+  const digits = input.replace(/\D/g, '');
+  if (digits.length === 11) {
+    const v = normalizeCpf(digits);
+    return v ? { value: v, type: 'cpf' } : null;
+  }
+  if (digits.length === 14) {
+    const v = normalizeCnpj(digits);
+    return v ? { value: v, type: 'cnpj' } : null;
+  }
+  return null;
+}
+
 // Valida email (regex pragmatico — nao tenta cobrir 100% da RFC 5322).
 export function isValidEmail(input: string): boolean {
   if (!input) return false;
