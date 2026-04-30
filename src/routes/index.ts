@@ -11,6 +11,7 @@ import assetsRouter from './assets';
 import assetMovementsRouter from './assetMovements';
 import authRouter from './auth';
 import systemRouter from './system';
+import adminRouter from './admin';
 import { decodeAuth, requireUser } from '../middlewares/auth';
 
 const router = Router();
@@ -36,6 +37,9 @@ router.use('/system', systemRouter);
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Admin (rotas exigem role admin via middleware do proprio router)
+router.use('/admin', authenticatedLimiter, adminRouter);
 
 // Autenticados
 router.use('/transactions', requireUser, authenticatedLimiter, transactionsRouter);
