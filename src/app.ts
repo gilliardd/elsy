@@ -9,6 +9,7 @@ import routes from './routes';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler';
 import { startWhatsApp, stopWhatsApp } from './whatsapp';
 import { ensureAdminExists } from './models/User';
+import { startSubscriptionScheduler, stopSubscriptionScheduler } from './services/subscriptionScheduler';
 
 async function main(): Promise<void> {
   console.log('\n🚀 Iniciando Elsy...\n');
@@ -60,10 +61,15 @@ async function main(): Promise<void> {
   // Inicia bot WhatsApp via Baileys (a conexao acontece em background;
   // se ainda nao houver QR escaneado, o admin escaneia pelo painel).
   await startWhatsApp();
-  console.log('💬 WhatsApp iniciado. Estado disponivel em /api/admin/whatsapp/status\n');
+  console.log('💬 WhatsApp iniciado. Estado disponivel em /api/admin/whatsapp/status');
+
+  // Scheduler de manutencao de assinaturas (trial reminders, overdue, cortesia)
+  startSubscriptionScheduler();
+  console.log('');
 
   const shutdown = async () => {
     console.log('\n⏹️  Encerrando...');
+    stopSubscriptionScheduler();
     await stopWhatsApp().catch(() => {});
     server.close();
     process.exit(0);

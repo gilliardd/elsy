@@ -1,12 +1,30 @@
 import { Router } from 'express';
 import { requireAdmin } from '../middlewares/auth';
 import { getMessagingClient } from '../messaging';
+import {
+  listPlans,
+  createNewPlan,
+  updateExistingPlan,
+  removeExistingPlan,
+  listUsers,
+  getUserDetail,
+  grantCortesia,
+  extendTrial,
+  blockUser,
+  unblockUser,
+  getSystemConfig,
+  setSystemConfig,
+  deleteSystemConfig,
+  getUserMessages,
+} from '../controllers/adminController';
 
 const router = Router();
 
 router.use(requireAdmin);
 
-// Status do WhatsApp
+// ------------------------------------------------------------
+// WhatsApp
+// ------------------------------------------------------------
 router.get('/whatsapp/status', (req, res) => {
   const client = getMessagingClient();
   res.json({
@@ -19,7 +37,6 @@ router.get('/whatsapp/status', (req, res) => {
   });
 });
 
-// QR code (Data URL PNG) — disponivel quando status = qr_required
 router.get('/whatsapp/qr', (req, res) => {
   const client = getMessagingClient();
   const qr = client.currentQrDataUrl();
@@ -30,7 +47,6 @@ router.get('/whatsapp/qr', (req, res) => {
   res.json({ success: true, data: { qr } });
 });
 
-// Forca reinicializacao da conexao (util quando sessao perde sincronia)
 router.post('/whatsapp/reconnect', async (req, res) => {
   try {
     const client = getMessagingClient();
@@ -42,5 +58,31 @@ router.post('/whatsapp/reconnect', async (req, res) => {
     res.status(500).json({ success: false, error: 'Erro ao reconectar' });
   }
 });
+
+// ------------------------------------------------------------
+// Plans
+// ------------------------------------------------------------
+router.get('/plans', listPlans);
+router.post('/plans', createNewPlan);
+router.put('/plans/:id', updateExistingPlan);
+router.delete('/plans/:id', removeExistingPlan);
+
+// ------------------------------------------------------------
+// Users
+// ------------------------------------------------------------
+router.get('/users', listUsers);
+router.get('/users/:id', getUserDetail);
+router.get('/users/:id/messages', getUserMessages);
+router.post('/users/:id/cortesia', grantCortesia);
+router.post('/users/:id/extend-trial', extendTrial);
+router.post('/users/:id/block', blockUser);
+router.post('/users/:id/unblock', unblockUser);
+
+// ------------------------------------------------------------
+// System config (Asaas, SMTP, OpenAI, etc.)
+// ------------------------------------------------------------
+router.get('/system-config', getSystemConfig);
+router.put('/system-config/:key', setSystemConfig);
+router.delete('/system-config/:key', deleteSystemConfig);
 
 export default router;

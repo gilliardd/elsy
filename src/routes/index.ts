@@ -12,6 +12,9 @@ import assetMovementsRouter from './assetMovements';
 import authRouter from './auth';
 import systemRouter from './system';
 import adminRouter from './admin';
+import publicRouter from './public';
+import subscriptionRouter from './subscription';
+import webhooksRouter from './webhooks';
 import { decodeAuth, requireUser } from '../middlewares/auth';
 
 const router = Router();
@@ -32,6 +35,10 @@ const authenticatedLimiter = rateLimit({
 // Publicos
 router.use('/auth', authRouter);
 router.use('/system', systemRouter);
+router.use('/public', publicRouter);
+
+// Webhooks (publico, validados internamente por header/secret)
+router.use('/webhooks', webhooksRouter);
 
 // Health check (publico)
 router.get('/health', (req, res) => {
@@ -40,6 +47,9 @@ router.get('/health', (req, res) => {
 
 // Admin (rotas exigem role admin via middleware do proprio router)
 router.use('/admin', authenticatedLimiter, adminRouter);
+
+// Subscription (autenticado)
+router.use('/subscription', authenticatedLimiter, subscriptionRouter);
 
 // Autenticados
 router.use('/transactions', requireUser, authenticatedLimiter, transactionsRouter);

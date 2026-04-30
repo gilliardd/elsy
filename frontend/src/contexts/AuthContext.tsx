@@ -79,7 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function login(username: string, password: string) {
-    const response = await fetch('/api/auth/login', {
+    // Frontend atual atende apenas o admin. Login de usuario comum (telefone +
+    // senha) entra na Fase 5 com /admin/* segregado e fluxo proprio.
+    const response = await fetch('/api/auth/admin/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

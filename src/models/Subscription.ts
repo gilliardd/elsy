@@ -12,6 +12,8 @@ export interface Subscription {
   started_at: Date | null;
   trial_ends_at: Date | null;
   current_period_end: Date | null;
+  overdue_since: Date | null;
+  last_overdue_notice_at: Date | null;
   cancel_at_period_end: boolean;
   cancelled_at: Date | null;
   deleted_at: Date | null;
@@ -102,5 +104,46 @@ export async function softDeleteSubscription(id: number): Promise<void> {
     `UPDATE subscriptions SET deleted_at = NOW(), status = 'cancelled', cancelled_at = NOW()
      WHERE id = ?`,
     [id]
+  );
+}
+
+export async function markOverdue(id: number, since?: Date): Promise<void> {
+  await query(
+    `UPDATE subscriptions
+     SET status = 'overdue',
+         overdue_since = COALESCE(overdue_since, ?)
+     WHERE id = ?`,
+    [since || new Date(), id]
+  );
+}
+
+export async function clearOverdue(id: number): Promise<void> {
+  await query(
+    `UPDATE subscriptions
+     SET overdue_since = NULL, last_overdue_notice_at = NULL
+     WHERE id = ?`,
+    [id]
+  );
+}
+
+export async function setOverdueNoticeAt(id: number, at: Date): Promise<void> {
+  await query(
+    `UPDATE subscriptions SET last_overdue_notice_at = ? WHERE id = ?`,
+    [at, id]
+  );
+}
+
+// Subscriptions com status='overdue' (para o scheduler de cobranca)
+export async function getOverdueSubscriptions(): Promise<
+  (Subscription & { user_phone: string | null; user_id_internal: number })[]
+> {
+  return query<any[]>(
+    `SELECT s.*, u.phone_number AS user_phone, u.id AS user_id_internal
+     FROM subscriptions s
+     JOIN users u ON s.user_id = u.id
+     WHERE s.deleted_at IS NULL
+       AND s.status = 'overdue'
+       AND u.is_active = TRUE
+     ORDER BY s.overdue_since ASC`
   );
 }
