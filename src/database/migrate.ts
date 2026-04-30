@@ -3,10 +3,31 @@ import fs from 'fs';
 import path from 'path';
 import { env } from '../config/env';
 
-async function runMigrations(): Promise<void> {
-  console.log('🚀 Iniciando migracoes do banco de dados...\n');
+async function ensureMigrationsTable(conn: mysql.Connection): Promise<void> {
+  await conn.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename VARCHAR(255) PRIMARY KEY,
+      applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+}
 
-  // Cria conexao com multipleStatements habilitado
+async function appliedMigrations(conn: mysql.Connection): Promise<Set<string>> {
+  const [rows] = await conn.query<mysql.RowDataPacket[]>(
+    'SELECT filename FROM schema_migrations'
+  );
+  return new Set(rows.map((r) => r.filename));
+}
+
+async function applyFile(conn: mysql.Connection, filePath: string, label: string): Promise<void> {
+  const sql = fs.readFileSync(filePath, 'utf-8');
+  await conn.query(sql);
+  console.log(`✅ ${label}`);
+}
+
+async function runMigrations(): Promise<void> {
+  console.log('\n🚀 Iniciando migracoes do banco de dados...\n');
+
   const connection = await mysql.createConnection({
     host: env.db.host,
     port: env.db.port,
@@ -19,30 +40,56 @@ async function runMigrations(): Promise<void> {
 
   console.log('✅ Conectado ao MySQL\n');
 
+  // 1) Schema base (idempotente — usa CREATE TABLE IF NOT EXISTS)
   const schemaPath = path.resolve(__dirname, '../../database/schema.sql');
-  const schema = fs.readFileSync(schemaPath, 'utf-8');
-
-  try {
-    // Executa todo o schema de uma vez
-    await connection.query(schema);
-    console.log('✅ Tabela categories criada');
-    console.log('✅ Tabela transactions criada');
-    console.log('✅ Tabela budgets criada');
-    console.log('✅ Tabela investments criada');
-    console.log('✅ Tabela investment_transactions criada');
-    console.log('✅ Tabela cash_accounts criada');
-    console.log('✅ Tabela alerts criada');
-    console.log('✅ Tabela settings criada');
-    console.log('✅ Dados iniciais inseridos');
-  } catch (error: any) {
-    if (error.code === 'ER_TABLE_EXISTS_ERROR') {
-      console.log('ℹ️  Tabelas ja existem');
-    } else {
-      console.error('❌ Erro:', error.message);
+  if (fs.existsSync(schemaPath)) {
+    try {
+      await applyFile(connection, schemaPath, 'Schema base aplicado');
+    } catch (error: any) {
+      // Schema base e idempotente; erros de "ja existe" sao esperados em re-runs
+      if (error.code !== 'ER_TABLE_EXISTS_ERROR') {
+        console.error('❌ Erro no schema base:', error.message);
+        throw error;
+      }
     }
   }
 
-  console.log('\n✅ Migracoes concluidas!');
+  // 2) Migrations incrementais
+  await ensureMigrationsTable(connection);
+  const applied = await appliedMigrations(connection);
+
+  const migrationsDir = path.resolve(__dirname, '../../database/migrations');
+  if (!fs.existsSync(migrationsDir)) {
+    console.log('\n✅ Sem migracoes incrementais.');
+    await connection.end();
+    return;
+  }
+
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  for (const file of files) {
+    if (applied.has(file)) {
+      console.log(`⏭️  ${file} (ja aplicada)`);
+      continue;
+    }
+
+    const filePath = path.join(migrationsDir, file);
+    try {
+      await applyFile(connection, filePath, `Migration ${file} aplicada`);
+      await connection.query(
+        'INSERT INTO schema_migrations (filename) VALUES (?)',
+        [file]
+      );
+    } catch (error: any) {
+      console.error(`❌ Erro na migration ${file}:`, error.message);
+      throw error;
+    }
+  }
+
+  console.log('\n✅ Migracoes concluidas!\n');
 
   await connection.end();
 }

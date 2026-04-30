@@ -3,6 +3,7 @@ import { query } from '../config/database';
 
 export async function getReportsByCategory(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { startDate, endDate, type } = req.query;
 
     if (!startDate || !endDate) {
@@ -11,7 +12,7 @@ export async function getReportsByCategory(req: Request, res: Response): Promise
     }
 
     let typeFilter = '';
-    const params: any[] = [startDate, endDate];
+    const params: any[] = [userId, startDate, endDate, userId];
 
     if (type && (type === 'income' || type === 'expense')) {
       typeFilter = 'AND t.type = ?';
@@ -36,15 +37,14 @@ export async function getReportsByCategory(req: Request, res: Response): Promise
         COALESCE(SUM(t.amount), 0) as total,
         COUNT(t.id) as count
        FROM categories c
-       LEFT JOIN transactions t ON t.category_id = c.id AND t.date BETWEEN ? AND ? ${typeFilter}
-       WHERE c.is_active = true
+       LEFT JOIN transactions t ON t.category_id = c.id AND t.user_id = ? AND t.date BETWEEN ? AND ? ${typeFilter}
+       WHERE c.user_id = ? AND c.is_active = true
        GROUP BY c.id, c.name, c.type, c.color, c.icon
        HAVING total > 0
        ORDER BY total DESC`,
       params
     );
 
-    // Calcula totais
     const totals = {
       income: data.filter(d => d.type === 'income').reduce((sum, d) => sum + Number(d.total), 0),
       expense: data.filter(d => d.type === 'expense').reduce((sum, d) => sum + Number(d.total), 0),
@@ -72,6 +72,7 @@ export async function getReportsByCategory(req: Request, res: Response): Promise
 
 export async function getReportsByPeriod(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { startDate, endDate, groupBy = 'day' } = req.query;
 
     if (!startDate || !endDate) {
@@ -84,7 +85,7 @@ export async function getReportsByPeriod(req: Request, res: Response): Promise<v
 
     switch (groupBy) {
       case 'week':
-        dateFormat = '%Y-%u'; // Ano-Semana
+        dateFormat = '%Y-%u';
         groupByClause = 'YEARWEEK(t.date)';
         break;
       case 'month':
@@ -95,7 +96,7 @@ export async function getReportsByPeriod(req: Request, res: Response): Promise<v
         dateFormat = '%Y';
         groupByClause = 'YEAR(t.date)';
         break;
-      default: // day
+      default:
         dateFormat = '%Y-%m-%d';
         groupByClause = 'DATE(t.date)';
     }
@@ -110,10 +111,10 @@ export async function getReportsByPeriod(req: Request, res: Response): Promise<v
         COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount ELSE 0 END), 0) as income,
         COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END), 0) as expense
        FROM transactions t
-       WHERE t.date BETWEEN ? AND ?
+       WHERE t.user_id = ? AND t.date BETWEEN ? AND ?
        GROUP BY ${groupByClause}
        ORDER BY period ASC`,
-      [startDate, endDate]
+      [userId, startDate, endDate]
     );
 
     res.json({
@@ -133,6 +134,7 @@ export async function getReportsByPeriod(req: Request, res: Response): Promise<v
 
 export async function getTransactionsList(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { startDate, endDate, type, category_id, limit = 100, offset = 0 } = req.query;
 
     if (!startDate || !endDate) {
@@ -140,8 +142,8 @@ export async function getTransactionsList(req: Request, res: Response): Promise<
       return;
     }
 
-    let filters = 't.date BETWEEN ? AND ?';
-    const params: any[] = [startDate, endDate];
+    let filters = 't.user_id = ? AND t.date BETWEEN ? AND ?';
+    const params: any[] = [userId, startDate, endDate];
 
     if (type && (type === 'income' || type === 'expense')) {
       filters += ' AND t.type = ?';
@@ -153,13 +155,11 @@ export async function getTransactionsList(req: Request, res: Response): Promise<
       params.push(category_id);
     }
 
-    // Total count
     const countResult = await query<{ total: number }[]>(
       `SELECT COUNT(*) as total FROM transactions t WHERE ${filters}`,
       params
     );
 
-    // Transactions
     const transactions = await query<{
       id: number;
       type: string;
@@ -207,6 +207,7 @@ export async function getTransactionsList(req: Request, res: Response): Promise<
 
 export async function getReportsSummary(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { startDate, endDate } = req.query;
 
     if (!startDate || !endDate) {
@@ -214,22 +215,20 @@ export async function getReportsSummary(req: Request, res: Response): Promise<vo
       return;
     }
 
-    // Totais
     const totals = await query<{ type: string; total: number; count: number }[]>(
       `SELECT
         type,
         COALESCE(SUM(amount), 0) as total,
         COUNT(*) as count
        FROM transactions
-       WHERE date BETWEEN ? AND ?
+       WHERE user_id = ? AND date BETWEEN ? AND ?
        GROUP BY type`,
-      [startDate, endDate]
+      [userId, startDate, endDate]
     );
 
     const income = totals.find(t => t.type === 'income');
     const expense = totals.find(t => t.type === 'expense');
 
-    // Maior despesa
     const biggestExpense = await query<{
       amount: number;
       description: string;
@@ -239,13 +238,12 @@ export async function getReportsSummary(req: Request, res: Response): Promise<vo
       `SELECT t.amount, t.description, c.name as category_name, t.date
        FROM transactions t
        JOIN categories c ON t.category_id = c.id
-       WHERE t.type = 'expense' AND t.date BETWEEN ? AND ?
+       WHERE t.user_id = ? AND t.type = 'expense' AND t.date BETWEEN ? AND ?
        ORDER BY t.amount DESC
        LIMIT 1`,
-      [startDate, endDate]
+      [userId, startDate, endDate]
     );
 
-    // Maior receita
     const biggestIncome = await query<{
       amount: number;
       description: string;
@@ -255,13 +253,12 @@ export async function getReportsSummary(req: Request, res: Response): Promise<vo
       `SELECT t.amount, t.description, c.name as category_name, t.date
        FROM transactions t
        JOIN categories c ON t.category_id = c.id
-       WHERE t.type = 'income' AND t.date BETWEEN ? AND ?
+       WHERE t.user_id = ? AND t.type = 'income' AND t.date BETWEEN ? AND ?
        ORDER BY t.amount DESC
        LIMIT 1`,
-      [startDate, endDate]
+      [userId, startDate, endDate]
     );
 
-    // Categoria mais gastada
     const topExpenseCategory = await query<{
       category: string;
       color: string;
@@ -270,14 +267,13 @@ export async function getReportsSummary(req: Request, res: Response): Promise<vo
       `SELECT c.name as category, c.color, SUM(t.amount) as total
        FROM transactions t
        JOIN categories c ON t.category_id = c.id
-       WHERE t.type = 'expense' AND t.date BETWEEN ? AND ?
+       WHERE t.user_id = ? AND t.type = 'expense' AND t.date BETWEEN ? AND ?
        GROUP BY c.id, c.name, c.color
        ORDER BY total DESC
        LIMIT 1`,
-      [startDate, endDate]
+      [userId, startDate, endDate]
     );
 
-    // Media diaria
     const daysDiff = Math.ceil(
       (new Date(endDate as string).getTime() - new Date(startDate as string).getTime()) / (1000 * 60 * 60 * 24)
     ) + 1;

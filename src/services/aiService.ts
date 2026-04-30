@@ -23,10 +23,13 @@ export interface ParsedTransaction {
   confidence: number;
 }
 
-export async function parseTransactionMessage(message: string): Promise<ParsedTransaction | null> {
+export async function parseTransactionMessage(
+  userId: number,
+  message: string
+): Promise<ParsedTransaction | null> {
   try {
-    const expenseCategories = await getCategoriesByType('expense');
-    const incomeCategories = await getCategoriesByType('income');
+    const expenseCategories = await getCategoriesByType(userId, 'expense');
+    const incomeCategories = await getCategoriesByType(userId, 'income');
 
     const expenseNames = expenseCategories.map((c) => c.name).join(', ');
     const incomeNames = incomeCategories.map((c) => c.name).join(', ');
@@ -165,10 +168,13 @@ export async function transcribeAudio(audioBuffer: Buffer, filename: string): Pr
 // LEITURA DE IMAGENS/COMPROVANTES (Vision)
 // =====================================================
 
-export async function parseReceiptImage(imageBase64: string): Promise<ParsedTransaction | null> {
+export async function parseReceiptImage(
+  userId: number,
+  imageBase64: string
+): Promise<ParsedTransaction | null> {
   try {
-    const expenseCategories = await getCategoriesByType('expense');
-    const incomeCategories = await getCategoriesByType('income');
+    const expenseCategories = await getCategoriesByType(userId, 'expense');
+    const incomeCategories = await getCategoriesByType(userId, 'income');
 
     const expenseNames = expenseCategories.map((c) => c.name).join(', ');
     const incomeNames = incomeCategories.map((c) => c.name).join(', ');

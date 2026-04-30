@@ -3,6 +3,7 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 
 export interface AssetMovement {
   id: number;
+  user_id: number;
   asset_id: number;
   date: string;
   movement_type: 'entry' | 'exit' | 'dividend';
@@ -35,97 +36,82 @@ export interface CreateMovementData {
 
 export interface UpdateMovementData extends Partial<CreateMovementData> {}
 
-// Ensure table exists
-export async function ensureMovementTableExists(): Promise<void> {
+export async function getAllMovements(userId: number): Promise<AssetMovement[]> {
   const pool = await getPool();
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS asset_movements (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      asset_id INT NOT NULL,
-      date DATE NOT NULL,
-      movement_type ENUM('entry', 'exit', 'dividend') NOT NULL,
-      quantity DECIMAL(18, 2) NOT NULL,
-      price DECIMAL(18, 2) NOT NULL,
-      total DECIMAL(18, 2) NOT NULL,
-      fee_rate DECIMAL(5, 2) DEFAULT 0,
-      total_after_fee DECIMAL(18, 2) NOT NULL,
-      current_price DECIMAL(18, 2) NULL,
-      profit DECIMAL(18, 2) NULL,
-      notes TEXT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      FOREIGN KEY (asset_id) REFERENCES investments(id) ON DELETE CASCADE
-    )
-  `);
-}
-
-export async function getAllMovements(): Promise<AssetMovement[]> {
-  const pool = await getPool();
-  await ensureMovementTableExists();
-
-  const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
       m.*,
       i.name as asset_name,
       i.type as asset_type,
       i.ticker as asset_ticker
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    ORDER BY m.date DESC, m.created_at DESC
-  `);
+    WHERE m.user_id = ?
+    ORDER BY m.date DESC, m.created_at DESC`,
+    [userId]
+  );
   return rows as AssetMovement[];
 }
 
-export async function getMovementById(id: number): Promise<AssetMovement | null> {
+export async function getMovementById(userId: number, id: number): Promise<AssetMovement | null> {
   const pool = await getPool();
-  const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
       m.*,
       i.name as asset_name,
       i.type as asset_type,
       i.ticker as asset_ticker
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    WHERE m.id = ?
-  `, [id]);
+    WHERE m.id = ? AND m.user_id = ?`,
+    [id, userId]
+  );
   return rows.length > 0 ? (rows[0] as AssetMovement) : null;
 }
 
-export async function getMovementsByAsset(assetId: number): Promise<AssetMovement[]> {
+export async function getMovementsByAsset(userId: number, assetId: number): Promise<AssetMovement[]> {
   const pool = await getPool();
-  const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
       m.*,
       i.name as asset_name,
       i.type as asset_type,
       i.ticker as asset_ticker
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    WHERE m.asset_id = ?
-    ORDER BY m.date DESC
-  `, [assetId]);
+    WHERE m.user_id = ? AND m.asset_id = ?
+    ORDER BY m.date DESC`,
+    [userId, assetId]
+  );
   return rows as AssetMovement[];
 }
 
-export async function getMovementsByDateRange(startDate: string, endDate: string): Promise<AssetMovement[]> {
+export async function getMovementsByDateRange(
+  userId: number,
+  startDate: string,
+  endDate: string
+): Promise<AssetMovement[]> {
   const pool = await getPool();
-  const [rows] = await pool.query<RowDataPacket[]>(`
-    SELECT
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT
       m.*,
       i.name as asset_name,
       i.type as asset_type,
       i.ticker as asset_ticker
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    WHERE m.date BETWEEN ? AND ?
-    ORDER BY m.date DESC
-  `, [startDate, endDate]);
+    WHERE m.user_id = ? AND m.date BETWEEN ? AND ?
+    ORDER BY m.date DESC`,
+    [userId, startDate, endDate]
+  );
   return rows as AssetMovement[];
 }
 
-export async function createMovement(data: CreateMovementData): Promise<AssetMovement> {
+export async function createMovement(
+  userId: number,
+  data: CreateMovementData
+): Promise<AssetMovement> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
   const total = data.quantity * data.price;
   const feeRate = data.fee_rate || 0;
@@ -133,57 +119,58 @@ export async function createMovement(data: CreateMovementData): Promise<AssetMov
 
   let totalAfterFee: number;
   if (data.movement_type === 'entry') {
-    totalAfterFee = total + feeAmount;  // Entry: pay more (total + fee)
+    totalAfterFee = total + feeAmount;
   } else if (data.movement_type === 'exit') {
-    totalAfterFee = total - feeAmount; // Exit: receive less (total - fee)
+    totalAfterFee = total - feeAmount;
   } else {
-    // Dividend: receive dividend minus tax/fees
     totalAfterFee = total - feeAmount;
   }
 
-  // Calculate profit
   let profit: number | null = null;
   if (data.movement_type === 'dividend') {
-    // Dividend: profit is the net amount received
     profit = totalAfterFee;
   } else if (data.current_price !== undefined && data.current_price !== null) {
     const currentTotal = data.quantity * data.current_price;
     profit = data.movement_type === 'entry'
-      ? currentTotal - totalAfterFee  // Entry: profit = current value - cost
-      : totalAfterFee - currentTotal; // Exit: profit = received - current value
+      ? currentTotal - totalAfterFee
+      : totalAfterFee - currentTotal;
   }
 
-  const [result] = await pool.query<ResultSetHeader>(`
-    INSERT INTO asset_movements (
-      asset_id, date, movement_type, quantity, price, total,
+  const [result] = await pool.query<ResultSetHeader>(
+    `INSERT INTO asset_movements (
+      user_id, asset_id, date, movement_type, quantity, price, total,
       fee_rate, total_after_fee, current_price, profit, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    data.asset_id,
-    data.date,
-    data.movement_type,
-    data.quantity,
-    data.price,
-    total,
-    feeRate,
-    totalAfterFee,
-    data.current_price || null,
-    profit,
-    data.notes || null,
-  ]);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      userId,
+      data.asset_id,
+      data.date,
+      data.movement_type,
+      data.quantity,
+      data.price,
+      total,
+      feeRate,
+      totalAfterFee,
+      data.current_price || null,
+      profit,
+      data.notes || null,
+    ]
+  );
 
-  const movement = await getMovementById(result.insertId);
+  const movement = await getMovementById(userId, result.insertId);
   return movement!;
 }
 
-export async function updateMovement(id: number, data: UpdateMovementData): Promise<AssetMovement | null> {
+export async function updateMovement(
+  userId: number,
+  id: number,
+  data: UpdateMovementData
+): Promise<AssetMovement | null> {
   const pool = await getPool();
 
-  // Get existing movement
-  const existing = await getMovementById(id);
+  const existing = await getMovementById(userId, id);
   if (!existing) return null;
 
-  // Merge with existing data
   const quantity = data.quantity ?? existing.quantity;
   const price = data.price ?? existing.price;
   const movementType = data.movement_type ?? existing.movement_type;
@@ -199,7 +186,6 @@ export async function updateMovement(id: number, data: UpdateMovementData): Prom
   } else if (movementType === 'exit') {
     totalAfterFee = total - feeAmount;
   } else {
-    // Dividend
     totalAfterFee = total - feeAmount;
   }
 
@@ -249,32 +235,34 @@ export async function updateMovement(id: number, data: UpdateMovementData): Prom
     return existing;
   }
 
-  values.push(id);
+  values.push(id, userId);
 
   await pool.query(
-    `UPDATE asset_movements SET ${fields.join(', ')} WHERE id = ?`,
+    `UPDATE asset_movements SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
     values
   );
 
-  return getMovementById(id);
+  return getMovementById(userId, id);
 }
 
-export async function deleteMovement(id: number): Promise<boolean> {
+export async function deleteMovement(userId: number, id: number): Promise<boolean> {
   const pool = await getPool();
   const [result] = await pool.query<ResultSetHeader>(
-    `DELETE FROM asset_movements WHERE id = ?`,
-    [id]
+    `DELETE FROM asset_movements WHERE id = ? AND user_id = ?`,
+    [id, userId]
   );
   return result.affectedRows > 0;
 }
 
-export async function updateAllCurrentPrices(assetId: number, currentPrice: number): Promise<void> {
+export async function updateAllCurrentPrices(
+  userId: number,
+  assetId: number,
+  currentPrice: number
+): Promise<void> {
   const pool = await getPool();
 
-  // Update current_price and recalculate profit for all movements of this asset
-  // For dividends, profit stays as total_after_fee (received amount)
-  await pool.query(`
-    UPDATE asset_movements
+  await pool.query(
+    `UPDATE asset_movements
     SET
       current_price = CASE WHEN movement_type = 'dividend' THEN current_price ELSE ? END,
       profit = CASE
@@ -282,11 +270,16 @@ export async function updateAllCurrentPrices(assetId: number, currentPrice: numb
         WHEN movement_type = 'entry' THEN (quantity * ?) - total_after_fee
         ELSE total_after_fee - (quantity * ?)
       END
-    WHERE asset_id = ?
-  `, [currentPrice, currentPrice, currentPrice, assetId]);
+    WHERE user_id = ? AND asset_id = ?`,
+    [currentPrice, currentPrice, currentPrice, userId, assetId]
+  );
 }
 
-export async function getMovementsSummary(startDate?: string, endDate?: string): Promise<{
+export async function getMovementsSummary(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   totalEntries: number;
   totalExits: number;
   totalDividends: number;
@@ -294,9 +287,8 @@ export async function getMovementsSummary(startDate?: string, endDate?: string):
   totalProfit: number;
 }> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       SUM(CASE WHEN movement_type = 'entry' THEN total_after_fee ELSE 0 END) as totalEntries,
       SUM(CASE WHEN movement_type = 'exit' THEN total_after_fee ELSE 0 END) as totalExits,
@@ -304,15 +296,16 @@ export async function getMovementsSummary(startDate?: string, endDate?: string):
       SUM(CASE WHEN movement_type = 'entry' THEN total_after_fee WHEN movement_type = 'exit' THEN -total_after_fee ELSE 0 END) as totalInvested,
       COALESCE(SUM(profit), 0) as totalProfit
     FROM asset_movements
+    WHERE user_id = ?
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` WHERE date BETWEEN ? AND ?`;
+    sql += ` AND date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return {
     totalEntries: Number(rows[0].totalEntries) || 0,
@@ -323,8 +316,11 @@ export async function getMovementsSummary(startDate?: string, endDate?: string):
   };
 }
 
-// Analytics: Profit by month
-export async function getProfitByMonth(startDate?: string, endDate?: string): Promise<{
+export async function getProfitByMonth(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   month: string;
   entries: number;
   exits: number;
@@ -332,9 +328,8 @@ export async function getProfitByMonth(startDate?: string, endDate?: string): Pr
   profit: number;
 }[]> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       DATE_FORMAT(date, '%Y-%m') as month,
       SUM(CASE WHEN movement_type = 'entry' THEN total_after_fee ELSE 0 END) as entries,
@@ -342,17 +337,18 @@ export async function getProfitByMonth(startDate?: string, endDate?: string): Pr
       SUM(CASE WHEN movement_type = 'dividend' THEN total_after_fee ELSE 0 END) as dividends,
       COALESCE(SUM(profit), 0) as profit
     FROM asset_movements
+    WHERE user_id = ?
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` WHERE date BETWEEN ? AND ?`;
+    sql += ` AND date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  query += ` GROUP BY DATE_FORMAT(date, '%Y-%m') ORDER BY month`;
+  sql += ` GROUP BY DATE_FORMAT(date, '%Y-%m') ORDER BY month`;
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return rows.map(row => ({
     month: row.month,
@@ -363,8 +359,11 @@ export async function getProfitByMonth(startDate?: string, endDate?: string): Pr
   }));
 }
 
-// Analytics: Profit by asset type
-export async function getProfitByType(startDate?: string, endDate?: string): Promise<{
+export async function getProfitByType(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   type: string;
   entries: number;
   exits: number;
@@ -373,9 +372,8 @@ export async function getProfitByType(startDate?: string, endDate?: string): Pro
   count: number;
 }[]> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       i.type,
       SUM(CASE WHEN m.movement_type = 'entry' THEN m.total_after_fee ELSE 0 END) as entries,
@@ -385,17 +383,18 @@ export async function getProfitByType(startDate?: string, endDate?: string): Pro
       COUNT(*) as count
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
+    WHERE m.user_id = ?
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` WHERE m.date BETWEEN ? AND ?`;
+    sql += ` AND m.date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  query += ` GROUP BY i.type ORDER BY entries DESC`;
+  sql += ` GROUP BY i.type ORDER BY entries DESC`;
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return rows.map(row => ({
     type: row.type,
@@ -407,8 +406,11 @@ export async function getProfitByType(startDate?: string, endDate?: string): Pro
   }));
 }
 
-// Analytics: Profit by individual asset
-export async function getProfitByAsset(startDate?: string, endDate?: string): Promise<{
+export async function getProfitByAsset(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   asset_id: number;
   asset_name: string;
   asset_ticker: string | null;
@@ -420,9 +422,8 @@ export async function getProfitByAsset(startDate?: string, endDate?: string): Pr
   quantity: number;
 }[]> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       i.id as asset_id,
       i.name as asset_name,
@@ -435,17 +436,18 @@ export async function getProfitByAsset(startDate?: string, endDate?: string): Pr
       SUM(CASE WHEN m.movement_type = 'entry' THEN m.quantity WHEN m.movement_type = 'exit' THEN -m.quantity ELSE 0 END) as quantity
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
+    WHERE m.user_id = ?
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` WHERE m.date BETWEEN ? AND ?`;
+    sql += ` AND m.date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  query += ` GROUP BY i.id, i.name, i.ticker, i.type ORDER BY entries DESC`;
+  sql += ` GROUP BY i.id, i.name, i.ticker, i.type ORDER BY entries DESC`;
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return rows.map(row => ({
     asset_id: row.asset_id,
@@ -460,8 +462,11 @@ export async function getProfitByAsset(startDate?: string, endDate?: string): Pr
   }));
 }
 
-// Analytics: Purchases by asset
-export async function getPurchasesByAsset(startDate?: string, endDate?: string): Promise<{
+export async function getPurchasesByAsset(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   asset_id: number;
   asset_name: string;
   asset_ticker: string | null;
@@ -471,9 +476,8 @@ export async function getPurchasesByAsset(startDate?: string, endDate?: string):
   avg_price: number;
 }[]> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       i.id as asset_id,
       i.name as asset_name,
@@ -484,18 +488,18 @@ export async function getPurchasesByAsset(startDate?: string, endDate?: string):
       AVG(m.price) as avg_price
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    WHERE m.movement_type = 'entry'
+    WHERE m.user_id = ? AND m.movement_type = 'entry'
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` AND m.date BETWEEN ? AND ?`;
+    sql += ` AND m.date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  query += ` GROUP BY i.id, i.name, i.ticker, i.type ORDER BY total_purchased DESC`;
+  sql += ` GROUP BY i.id, i.name, i.ticker, i.type ORDER BY total_purchased DESC`;
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return rows.map(row => ({
     asset_id: row.asset_id,
@@ -508,17 +512,19 @@ export async function getPurchasesByAsset(startDate?: string, endDate?: string):
   }));
 }
 
-// Analytics: Purchases by asset type/category
-export async function getPurchasesByCategory(startDate?: string, endDate?: string): Promise<{
+export async function getPurchasesByCategory(
+  userId: number,
+  startDate?: string,
+  endDate?: string
+): Promise<{
   type: string;
   total_purchased: number;
   quantity_purchased: number;
   asset_count: number;
 }[]> {
   const pool = await getPool();
-  await ensureMovementTableExists();
 
-  let query = `
+  let sql = `
     SELECT
       i.type,
       SUM(m.total_after_fee) as total_purchased,
@@ -526,18 +532,18 @@ export async function getPurchasesByCategory(startDate?: string, endDate?: strin
       COUNT(DISTINCT i.id) as asset_count
     FROM asset_movements m
     JOIN investments i ON m.asset_id = i.id
-    WHERE m.movement_type = 'entry'
+    WHERE m.user_id = ? AND m.movement_type = 'entry'
   `;
 
-  const params: any[] = [];
+  const params: any[] = [userId];
   if (startDate && endDate) {
-    query += ` AND m.date BETWEEN ? AND ?`;
+    sql += ` AND m.date BETWEEN ? AND ?`;
     params.push(startDate, endDate);
   }
 
-  query += ` GROUP BY i.type ORDER BY total_purchased DESC`;
+  sql += ` GROUP BY i.type ORDER BY total_purchased DESC`;
 
-  const [rows] = await pool.query<RowDataPacket[]>(query, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
 
   return rows.map(row => ({
     type: row.type,

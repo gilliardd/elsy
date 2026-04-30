@@ -3,6 +3,7 @@ import { ResultSetHeader } from 'mysql2';
 
 export interface Bill {
   id: number;
+  user_id: number;
   name: string;
   description: string | null;
   amount: number;
@@ -23,50 +24,56 @@ export interface BillWithCategory extends Bill {
   category_color?: string;
 }
 
-export async function getAllBills(): Promise<BillWithCategory[]> {
+export async function getAllBills(userId: number): Promise<BillWithCategory[]> {
   return query<BillWithCategory[]>(
     `SELECT b.*, c.name as category_name, c.color as category_color
      FROM bills b
      LEFT JOIN categories c ON b.category_id = c.id
-     WHERE b.is_active = true
+     WHERE b.user_id = ?
+       AND b.is_active = true
        AND (b.repeat_months IS NULL OR DATE_ADD(b.created_at, INTERVAL b.repeat_months MONTH) >= CURDATE())
-     ORDER BY b.due_day`
+     ORDER BY b.due_day`,
+    [userId]
   );
 }
 
-export async function getBillById(id: number): Promise<BillWithCategory | null> {
+export async function getBillById(userId: number, id: number): Promise<BillWithCategory | null> {
   const rows = await query<BillWithCategory[]>(
     `SELECT b.*, c.name as category_name, c.color as category_color
      FROM bills b
      LEFT JOIN categories c ON b.category_id = c.id
-     WHERE b.id = ? AND b.is_active = true`,
-    [id]
+     WHERE b.id = ? AND b.user_id = ? AND b.is_active = true`,
+    [id, userId]
   );
   return rows[0] || null;
 }
 
-export async function getBillByName(name: string): Promise<Bill | null> {
+export async function getBillByName(userId: number, name: string): Promise<Bill | null> {
   const rows = await query<Bill[]>(
-    'SELECT * FROM bills WHERE UPPER(name) LIKE UPPER(?) AND is_active = true',
-    [`%${name}%`]
+    'SELECT * FROM bills WHERE user_id = ? AND UPPER(name) LIKE UPPER(?) AND is_active = true',
+    [userId, `%${name}%`]
   );
   return rows[0] || null;
 }
 
-export async function createBill(data: {
-  name: string;
-  description?: string;
-  amount: number;
-  due_day: number;
-  category_id?: number;
-  is_recurring?: boolean;
-  repeat_months?: number | null;
-  reminder_days_before?: number;
-}): Promise<number> {
+export async function createBill(
+  userId: number,
+  data: {
+    name: string;
+    description?: string;
+    amount: number;
+    due_day: number;
+    category_id?: number;
+    is_recurring?: boolean;
+    repeat_months?: number | null;
+    reminder_days_before?: number;
+  }
+): Promise<number> {
   const result = await query<ResultSetHeader>(
-    `INSERT INTO bills (name, description, amount, due_day, category_id, is_recurring, repeat_months, reminder_days_before)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO bills (user_id, name, description, amount, due_day, category_id, is_recurring, repeat_months, reminder_days_before)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      userId,
       data.name,
       data.description || null,
       data.amount,
@@ -81,6 +88,7 @@ export async function createBill(data: {
 }
 
 export async function updateBill(
+  userId: number,
   id: number,
   data: {
     name?: string;
@@ -131,32 +139,46 @@ export async function updateBill(
 
   if (fields.length === 0) return;
 
-  values.push(id);
-  await query(`UPDATE bills SET ${fields.join(', ')} WHERE id = ?`, values);
+  values.push(id, userId);
+  await query(
+    `UPDATE bills SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`,
+    values
+  );
 }
 
-export async function deleteBill(id: number): Promise<void> {
-  await query('UPDATE bills SET is_active = false WHERE id = ?', [id]);
+export async function deleteBill(userId: number, id: number): Promise<void> {
+  await query(
+    'UPDATE bills SET is_active = false WHERE id = ? AND user_id = ?',
+    [id, userId]
+  );
 }
 
-export async function markBillAsPaid(id: number, date?: string): Promise<void> {
+export async function markBillAsPaid(userId: number, id: number, date?: string): Promise<void> {
   const paidDate = date || new Date().toISOString().split('T')[0];
-  await query('UPDATE bills SET last_paid_date = ? WHERE id = ?', [paidDate, id]);
+  await query(
+    'UPDATE bills SET last_paid_date = ? WHERE id = ? AND user_id = ?',
+    [paidDate, id, userId]
+  );
 }
 
-export async function updateLastReminderDate(id: number, date: string): Promise<void> {
-  await query('UPDATE bills SET last_reminder_date = ? WHERE id = ?', [date, id]);
+export async function updateLastReminderDate(
+  userId: number,
+  id: number,
+  date: string
+): Promise<void> {
+  await query(
+    'UPDATE bills SET last_reminder_date = ? WHERE id = ? AND user_id = ?',
+    [date, id, userId]
+  );
 }
 
-// Busca contas que precisam de lembrete hoje
-export async function getBillsToRemind(): Promise<BillWithCategory[]> {
+// Busca contas que precisam de lembrete hoje (de TODOS os usuarios — usado pelo scheduler)
+export async function getBillsToRemindAllUsers(): Promise<BillWithCategory[]> {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const currentDay = today.getDate();
   const currentMonth = today.getMonth() + 1;
   const currentYear = today.getFullYear();
-
-  // Calcula o ultimo dia do mes
   const lastDayOfMonth = new Date(currentYear, currentMonth, 0).getDate();
 
   return query<BillWithCategory[]>(
@@ -165,9 +187,7 @@ export async function getBillsToRemind(): Promise<BillWithCategory[]> {
      LEFT JOIN categories c ON b.category_id = c.id
      WHERE b.is_active = true
        AND (
-         -- Dia de vencimento menos dias de antecedencia = hoje
          (b.due_day - b.reminder_days_before = ?)
-         -- OU para contas que vencem nos primeiros dias do mes, verifica se hoje é fim do mes anterior
          OR (b.due_day <= b.reminder_days_before AND ? >= ? - b.reminder_days_before + b.due_day)
        )
        AND (b.last_reminder_date IS NULL OR b.last_reminder_date < ?)`,
@@ -175,8 +195,7 @@ export async function getBillsToRemind(): Promise<BillWithCategory[]> {
   );
 }
 
-// Busca contas que vencem hoje
-export async function getBillsDueToday(): Promise<BillWithCategory[]> {
+export async function getBillsDueToday(userId: number): Promise<BillWithCategory[]> {
   const today = new Date();
   const currentDay = today.getDate();
   const todayStr = today.toISOString().split('T')[0];
@@ -185,15 +204,15 @@ export async function getBillsDueToday(): Promise<BillWithCategory[]> {
     `SELECT b.*, c.name as category_name, c.color as category_color
      FROM bills b
      LEFT JOIN categories c ON b.category_id = c.id
-     WHERE b.is_active = true
+     WHERE b.user_id = ?
+       AND b.is_active = true
        AND b.due_day = ?
        AND (b.last_paid_date IS NULL OR b.last_paid_date < ?)`,
-    [currentDay, todayStr]
+    [userId, currentDay, todayStr]
   );
 }
 
-// Busca contas que vencem nos proximos X dias
-export async function getUpcomingBills(days: number = 7): Promise<BillWithCategory[]> {
+export async function getUpcomingBills(userId: number, days: number = 7): Promise<BillWithCategory[]> {
   const today = new Date();
   const currentDay = today.getDate();
   const todayStr = today.toISOString().split('T')[0];
@@ -202,18 +221,19 @@ export async function getUpcomingBills(days: number = 7): Promise<BillWithCatego
     `SELECT b.*, c.name as category_name, c.color as category_color
      FROM bills b
      LEFT JOIN categories c ON b.category_id = c.id
-     WHERE b.is_active = true
+     WHERE b.user_id = ?
+       AND b.is_active = true
        AND b.due_day BETWEEN ? AND ?
        AND (b.last_paid_date IS NULL OR b.last_paid_date < ?)
      ORDER BY b.due_day`,
-    [currentDay, currentDay + days, todayStr]
+    [userId, currentDay, currentDay + days, todayStr]
   );
 }
 
-// Retorna o total de contas a pagar no mes
-export async function getMonthlyBillsTotal(): Promise<number> {
+export async function getMonthlyBillsTotal(userId: number): Promise<number> {
   const result = await query<{ total: number }[]>(
-    'SELECT COALESCE(SUM(amount), 0) as total FROM bills WHERE is_active = true'
+    'SELECT COALESCE(SUM(amount), 0) as total FROM bills WHERE user_id = ? AND is_active = true',
+    [userId]
   );
   return Number(result[0]?.total || 0);
 }

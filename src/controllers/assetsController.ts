@@ -17,13 +17,14 @@ import {
 
 export async function listAssets(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { type } = req.query;
 
     let assets;
     if (type && typeof type === 'string') {
-      assets = await getAssetsByType(type as any);
+      assets = await getAssetsByType(userId, type as any);
     } else {
-      assets = await getAllAssets();
+      assets = await getAllAssets(userId);
     }
 
     res.json(assets);
@@ -35,8 +36,9 @@ export async function listAssets(req: Request, res: Response): Promise<void> {
 
 export async function getAsset(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
-    const asset = await getAssetById(Number(id));
+    const asset = await getAssetById(userId, Number(id));
 
     if (!asset) {
       res.status(404).json({ error: 'Ativo nao encontrado' });
@@ -52,8 +54,9 @@ export async function getAsset(req: Request, res: Response): Promise<void> {
 
 export async function getByTicker(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { ticker } = req.params;
-    const asset = await getAssetByTicker(ticker);
+    const asset = await getAssetByTicker(userId, ticker);
 
     if (!asset) {
       res.status(404).json({ error: 'Ativo nao encontrado' });
@@ -69,9 +72,9 @@ export async function getByTicker(req: Request, res: Response): Promise<void> {
 
 export async function create(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const data: CreateAssetData = req.body;
 
-    // Validacoes
     if (!data.name || !data.type || !data.purchase_date) {
       res.status(400).json({ error: 'Nome, tipo e data de compra sao obrigatorios' });
       return;
@@ -82,16 +85,15 @@ export async function create(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Se tem ticker, verifica se ja existe
     if (data.ticker) {
-      const existing = await getAssetByTicker(data.ticker);
+      const existing = await getAssetByTicker(userId, data.ticker);
       if (existing) {
         res.status(400).json({ error: 'Ja existe um ativo com esse codigo' });
         return;
       }
     }
 
-    const asset = await createAsset(data);
+    const asset = await createAsset(userId, data);
     res.status(201).json(asset);
   } catch (error) {
     console.error('Erro ao criar ativo:', error);
@@ -101,25 +103,25 @@ export async function create(req: Request, res: Response): Promise<void> {
 
 export async function update(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const data: UpdateAssetData = req.body;
 
-    const existing = await getAssetById(Number(id));
+    const existing = await getAssetById(userId, Number(id));
     if (!existing) {
       res.status(404).json({ error: 'Ativo nao encontrado' });
       return;
     }
 
-    // Se esta mudando ticker, verifica se ja existe outro com o mesmo ticker
     if (data.ticker && data.ticker !== existing.ticker) {
-      const withSameTicker = await getAssetByTicker(data.ticker);
+      const withSameTicker = await getAssetByTicker(userId, data.ticker);
       if (withSameTicker && withSameTicker.id !== Number(id)) {
         res.status(400).json({ error: 'Ja existe outro ativo com esse codigo' });
         return;
       }
     }
 
-    const asset = await updateAsset(Number(id), data);
+    const asset = await updateAsset(userId, Number(id), data);
     res.json(asset);
   } catch (error) {
     console.error('Erro ao atualizar ativo:', error);
@@ -129,15 +131,16 @@ export async function update(req: Request, res: Response): Promise<void> {
 
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
 
-    const existing = await getAssetById(Number(id));
+    const existing = await getAssetById(userId, Number(id));
     if (!existing) {
       res.status(404).json({ error: 'Ativo nao encontrado' });
       return;
     }
 
-    await deleteAsset(Number(id));
+    await deleteAsset(userId, Number(id));
     res.json({ message: 'Ativo removido com sucesso' });
   } catch (error) {
     console.error('Erro ao remover ativo:', error);
@@ -147,6 +150,7 @@ export async function remove(req: Request, res: Response): Promise<void> {
 
 export async function updatePrice(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { id } = req.params;
     const { current_price } = req.body;
 
@@ -155,7 +159,7 @@ export async function updatePrice(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const asset = await updateAssetPrice(Number(id), current_price);
+    const asset = await updateAssetPrice(userId, Number(id), current_price);
     if (!asset) {
       res.status(404).json({ error: 'Ativo nao encontrado' });
       return;
@@ -170,10 +174,11 @@ export async function updatePrice(req: Request, res: Response): Promise<void> {
 
 export async function getSummary(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const [totalInvested, totalCurrentValue, byType] = await Promise.all([
-      getTotalInvested(),
-      getTotalCurrentValue(),
-      getAssetsSummaryByType(),
+      getTotalInvested(userId),
+      getTotalCurrentValue(userId),
+      getAssetsSummaryByType(userId),
     ]);
 
     const profit = totalCurrentValue - totalInvested;

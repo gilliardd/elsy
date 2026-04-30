@@ -9,12 +9,17 @@ import {
 import { createTransaction } from '../models/Transaction';
 import { env } from '../config/env';
 
+// FASE 1 (multi-tenancy): o scheduler agora propaga user_id em todas as
+// chamadas aos models, mas o canal de envio continua sendo o Telegram com
+// um unico chatId (do admin). A virada para WhatsApp + envio por usuario
+// acontece na Fase 3.
+const ADMIN_USER_ID = 1;
+
 let schedulerInterval: NodeJS.Timeout | null = null;
 
-// Armazena bills pendentes de confirmacao de pagamento
 const pendingPaymentConfirmations: Map<
   number,
-  { billId: number; messageId: number; chatId: number }
+  { billId: number; messageId: number; chatId: number; userId: number }
 > = new Map();
 
 function formatCurrency(value: number): string {
@@ -66,15 +71,14 @@ async function sendBillReminder(
       reply_markup: keyboard,
     });
 
-    // Armazena para callback
     pendingPaymentConfirmations.set(bill.id, {
       billId: bill.id,
       messageId: sentMessage.message_id,
       chatId: chatId,
+      userId: bill.user_id,
     });
 
-    // Atualiza data do ultimo lembrete
-    await updateLastReminderDate(bill.id, today);
+    await updateLastReminderDate(bill.user_id, bill.id, today);
   } catch (error) {
     console.error(`Erro ao enviar lembrete da conta ${bill.name}:`, error);
   }
@@ -95,36 +99,33 @@ export async function checkAndSendReminders(bot: TelegramBot): Promise<void> {
   const lastDayOfMonth = new Date(currentYear, currentMonth, 0).getDate();
 
   try {
-    const bills = await getAllBills();
+    // Fase 1: scheduler ainda atende apenas o admin via Telegram.
+    // A virada para WhatsApp + envio por usuario acontece na Fase 3.
+    const bills = await getAllBills(ADMIN_USER_ID);
 
     for (const bill of bills) {
-      // Calcula quantos dias ate o vencimento
       let daysUntilDue: number;
 
       if (bill.due_day >= currentDay) {
         daysUntilDue = bill.due_day - currentDay;
       } else {
-        // Vencimento no proximo mes
         daysUntilDue = lastDayOfMonth - currentDay + bill.due_day;
       }
 
-      // Verifica se ja enviou lembrete hoje
       if (bill.last_reminder_date === todayStr) {
         continue;
       }
 
-      // Verifica se ja pagou este mes
       if (bill.last_paid_date) {
         const paidDate = new Date(bill.last_paid_date);
         if (
           paidDate.getMonth() + 1 === currentMonth &&
           paidDate.getFullYear() === currentYear
         ) {
-          continue; // Ja pagou este mes
+          continue;
         }
       }
 
-      // Envia lembrete de acordo com o reminder_days_before configurado ou no dia do vencimento
       if (daysUntilDue <= bill.reminder_days_before) {
         await sendBillReminder(bot, Number(chatId), bill, daysUntilDue);
       }
@@ -151,7 +152,10 @@ export async function handleBillCallback(
 
   if (isNaN(billId)) return false;
 
-  const bill = await getBillById(billId);
+  // Fase 1: scheduler ainda hardcoded no admin.
+  const userId = ADMIN_USER_ID;
+
+  const bill = await getBillById(userId, billId);
   if (!bill) {
     await bot.answerCallbackQuery(callbackQuery.id, {
       text: 'Conta nao encontrada',
@@ -161,17 +165,15 @@ export async function handleBillCallback(
   }
 
   if (action === 'bill_paid') {
-    // Marca como paga
     const today = new Date().toISOString().split('T')[0];
-    await markBillAsPaid(billId, today);
+    await markBillAsPaid(userId, billId, today);
 
-    // Cria transacao de despesa
     try {
-      await createTransaction({
+      await createTransaction(userId, {
         type: 'expense',
         amount: bill.amount,
         description: bill.name,
-        category_id: bill.category_id || 8, // 8 = categoria "Contas" (default)
+        category_id: bill.category_id || 8,
         date: today,
         notes: `Pagamento automatico - ${bill.description || ''}`,
         source: 'bill_payment',
@@ -203,7 +205,6 @@ export async function handleBillCallback(
       text: 'Pagamento registrado!',
     });
 
-    // Remove do mapa de pendentes
     pendingPaymentConfirmations.delete(billId);
   } else if (action === 'bill_snooze') {
     await bot.answerCallbackQuery(callbackQuery.id, {
@@ -223,8 +224,8 @@ export async function handleBillCallback(
       }
     );
 
-    // Reseta a data de lembrete para enviar novamente amanha
     await updateLastReminderDate(
+      userId,
       billId,
       new Date(Date.now() - 86400000).toISOString().split('T')[0]
     );
@@ -234,20 +235,17 @@ export async function handleBillCallback(
 }
 
 export function startBillScheduler(bot: TelegramBot): void {
-  // Executa verificacao imediatamente
   checkAndSendReminders(bot);
 
-  // Depois executa a cada hora
   schedulerInterval = setInterval(
     () => {
       const now = new Date();
-      // Executa apenas as 9h e as 18h
       if (now.getHours() === 9 || now.getHours() === 18) {
         checkAndSendReminders(bot);
       }
     },
     60 * 60 * 1000
-  ); // A cada hora
+  );
 
   console.log('📅 Scheduler de contas a pagar iniciado');
 }

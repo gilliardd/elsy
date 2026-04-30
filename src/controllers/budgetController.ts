@@ -15,10 +15,10 @@ import {
   type BudgetCategory,
 } from '../models/Budget';
 
-// Listar todos os orcamentos
 export async function list(req: Request, res: Response): Promise<void> {
   try {
-    const budgets = await getAllBudgets();
+    const userId = req.userId!;
+    const budgets = await getAllBudgets(userId);
     res.json({ success: true, data: budgets });
   } catch (error) {
     console.error('Erro ao listar orcamentos:', error);
@@ -26,11 +26,11 @@ export async function list(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Buscar orcamento por mes/ano
 export async function getByMonth(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
-    const budget = await getBudgetByMonth(Number(year), Number(month));
+    const budget = await getBudgetByMonth(userId, Number(year), Number(month));
 
     if (!budget) {
       res.status(404).json({ success: false, error: 'Orcamento nao encontrado' });
@@ -44,9 +44,9 @@ export async function getByMonth(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Criar orcamento
 export async function create(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month, rule, expected_income, custom_necessidades, custom_estilo_vida, custom_futuro } = req.body;
 
     if (!year || !month || !rule || expected_income === undefined) {
@@ -66,7 +66,6 @@ export async function create(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Validar percentuais customizados
     if (rule === 'custom') {
       if (custom_necessidades === undefined || custom_estilo_vida === undefined || custom_futuro === undefined) {
         res.status(400).json({
@@ -86,8 +85,7 @@ export async function create(req: Request, res: Response): Promise<void> {
       }
     }
 
-    // Verifica se ja existe orcamento para este mes
-    const existing = await getBudgetByMonth(Number(year), Number(month));
+    const existing = await getBudgetByMonth(userId, Number(year), Number(month));
     if (existing) {
       res.status(400).json({
         success: false,
@@ -96,7 +94,7 @@ export async function create(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const id = await createBudget({
+    const id = await createBudget(userId, {
       year: Number(year),
       month: Number(month),
       rule: rule as BudgetRule,
@@ -113,13 +111,13 @@ export async function create(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Atualizar orcamento
 export async function update(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
     const { rule, expected_income, custom_necessidades, custom_estilo_vida, custom_futuro } = req.body;
 
-    const budget = await getBudgetByMonth(Number(year), Number(month));
+    const budget = await getBudgetByMonth(userId, Number(year), Number(month));
     if (!budget) {
       res.status(404).json({ success: false, error: 'Orcamento nao encontrado' });
       return;
@@ -135,7 +133,6 @@ export async function update(req: Request, res: Response): Promise<void> {
         return;
       }
 
-      // Validar percentuais customizados
       if (rule === 'custom') {
         if (custom_necessidades === undefined || custom_estilo_vida === undefined || custom_futuro === undefined) {
           res.status(400).json({
@@ -156,7 +153,7 @@ export async function update(req: Request, res: Response): Promise<void> {
       }
     }
 
-    await updateBudget(budget.id, {
+    await updateBudget(userId, budget.id, {
       rule: rule as BudgetRule,
       expected_income: expected_income !== undefined ? Number(expected_income) : undefined,
       custom_necessidades: rule === 'custom' ? Number(custom_necessidades) : undefined,
@@ -171,18 +168,18 @@ export async function update(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Deletar orcamento
 export async function remove(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
 
-    const budget = await getBudgetByMonth(Number(year), Number(month));
+    const budget = await getBudgetByMonth(userId, Number(year), Number(month));
     if (!budget) {
       res.status(404).json({ success: false, error: 'Orcamento nao encontrado' });
       return;
     }
 
-    await deleteBudget(budget.id);
+    await deleteBudget(userId, budget.id);
     res.json({ success: true });
   } catch (error) {
     console.error('Erro ao excluir orcamento:', error);
@@ -190,9 +187,9 @@ export async function remove(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Adicionar item ao orcamento
 export async function addItem(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
     const { category, name, planned_amount } = req.body;
 
@@ -213,13 +210,13 @@ export async function addItem(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const budget = await getBudgetByMonth(Number(year), Number(month));
+    const budget = await getBudgetByMonth(userId, Number(year), Number(month));
     if (!budget) {
       res.status(404).json({ success: false, error: 'Orcamento nao encontrado' });
       return;
     }
 
-    const id = await createBudgetItem({
+    const id = await createBudgetItem(userId, {
       budget_id: budget.id,
       category: category as BudgetCategory,
       name,
@@ -233,9 +230,9 @@ export async function addItem(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Atualizar item do orcamento
 export async function updateItem(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { itemId } = req.params;
     const { category, name, planned_amount } = req.body;
 
@@ -250,7 +247,7 @@ export async function updateItem(req: Request, res: Response): Promise<void> {
       }
     }
 
-    await updateBudgetItem(Number(itemId), {
+    await updateBudgetItem(userId, Number(itemId), {
       category: category as BudgetCategory,
       name,
       planned_amount: planned_amount !== undefined ? Number(planned_amount) : undefined,
@@ -263,11 +260,11 @@ export async function updateItem(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Remover item do orcamento
 export async function removeItem(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { itemId } = req.params;
-    await deleteBudgetItem(Number(itemId));
+    await deleteBudgetItem(userId, Number(itemId));
     res.json({ success: true });
   } catch (error) {
     console.error('Erro ao remover item:', error);
@@ -275,18 +272,18 @@ export async function removeItem(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Obter resumo/sumario do orcamento
 export async function summary(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
 
-    const budget = await getBudgetByMonth(Number(year), Number(month));
+    const budget = await getBudgetByMonth(userId, Number(year), Number(month));
     if (!budget) {
       res.status(404).json({ success: false, error: 'Orcamento nao encontrado' });
       return;
     }
 
-    const summaryData = await getBudgetSummary(budget.id);
+    const summaryData = await getBudgetSummary(userId, budget.id);
     res.json({ success: true, data: summaryData });
   } catch (error) {
     console.error('Erro ao obter resumo:', error);
@@ -294,15 +291,14 @@ export async function summary(req: Request, res: Response): Promise<void> {
   }
 }
 
-// Copiar orcamento do mes anterior
 export async function copyFromPrevious(req: Request, res: Response): Promise<void> {
   try {
+    const userId = req.userId!;
     const { year, month } = req.params;
     const targetYear = Number(year);
     const targetMonth = Number(month);
 
-    // Verificar se ja existe orcamento para o mes destino
-    const existing = await getBudgetByMonth(targetYear, targetMonth);
+    const existing = await getBudgetByMonth(userId, targetYear, targetMonth);
     if (existing) {
       res.status(400).json({
         success: false,
@@ -311,7 +307,6 @@ export async function copyFromPrevious(req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Calcular mes anterior
     let fromYear = targetYear;
     let fromMonth = targetMonth - 1;
     if (fromMonth < 1) {
@@ -319,7 +314,7 @@ export async function copyFromPrevious(req: Request, res: Response): Promise<voi
       fromYear -= 1;
     }
 
-    const newBudgetId = await copyBudgetFromPrevious(fromYear, fromMonth, targetYear, targetMonth);
+    const newBudgetId = await copyBudgetFromPrevious(userId, fromYear, fromMonth, targetYear, targetMonth);
 
     if (!newBudgetId) {
       res.status(404).json({
@@ -336,7 +331,6 @@ export async function copyFromPrevious(req: Request, res: Response): Promise<voi
   }
 }
 
-// Obter regras disponiveis
 export async function getRules(req: Request, res: Response): Promise<void> {
   try {
     const rules = Object.entries(BUDGET_RULES).map(([key, value]) => ({
@@ -347,7 +341,6 @@ export async function getRules(req: Request, res: Response): Promise<void> {
       futuro: value.futuro,
     }));
 
-    // Adiciona opcao personalizada
     rules.push({
       id: 'custom',
       name: 'Personalizado',
