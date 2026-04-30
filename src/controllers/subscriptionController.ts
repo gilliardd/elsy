@@ -20,6 +20,7 @@ import {
   cancelSubscription as asaasCancelSubscription,
   getAsaasConfig,
 } from '../services/asaasService';
+import { sendTrialStartedEmail } from '../services/notifications';
 
 function badRequest(res: Response, error: string) {
   res.status(400).json({ success: false, error });
@@ -167,6 +168,13 @@ export async function createUserSubscription(req: Request, res: Response): Promi
 
   await markTrialUsed(userId);
   await setSubscriptionStatus(userId, subStatus, nextDueDate, subscriptionId);
+
+  // Email de trial iniciado (best-effort)
+  if (trialDays > 0 && user.email) {
+    sendTrialStartedEmail(user.email, user.name, nextDueDate).catch((err) =>
+      console.error('Erro enviando trial started email:', err)
+    );
+  }
 
   res.status(201).json({
     success: true,

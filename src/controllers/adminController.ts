@@ -27,6 +27,7 @@ import {
   deleteConfig,
 } from '../models/SystemConfig';
 import { invalidateAsaasConfigCache } from '../services/asaasService';
+import { invalidateSmtpCache } from '../services/emailService';
 import { getMessagesByUser } from '../models/MessageLog';
 
 function badRequest(res: Response, error: string) {
@@ -216,6 +217,12 @@ export async function unblockUser(req: Request, res: Response): Promise<void> {
 // ============================================================
 
 const ASAAS_KEYS = new Set(['asaas_api_key', 'asaas_environment', 'asaas_webhook_token']);
+const SMTP_KEYS = new Set(['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from']);
+
+function invalidateCachesFor(key: string): void {
+  if (ASAAS_KEYS.has(key)) invalidateAsaasConfigCache();
+  if (SMTP_KEYS.has(key)) invalidateSmtpCache();
+}
 
 export async function getSystemConfig(req: Request, res: Response): Promise<void> {
   const items = await listConfig();
@@ -228,10 +235,7 @@ export async function setSystemConfig(req: Request, res: Response): Promise<void
   if (typeof value !== 'string') return badRequest(res, 'value deve ser string');
 
   await setConfig(key, value, isSecret === true, description || null);
-
-  if (ASAAS_KEYS.has(key)) {
-    invalidateAsaasConfigCache();
-  }
+  invalidateCachesFor(key);
 
   res.json({ success: true });
 }
@@ -239,7 +243,7 @@ export async function setSystemConfig(req: Request, res: Response): Promise<void
 export async function deleteSystemConfig(req: Request, res: Response): Promise<void> {
   const { key } = req.params;
   await deleteConfig(key);
-  if (ASAAS_KEYS.has(key)) invalidateAsaasConfigCache();
+  invalidateCachesFor(key);
   res.json({ success: true });
 }
 

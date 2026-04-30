@@ -16,6 +16,9 @@ import { cloneTemplateCategoriesToUser } from '../models/Category';
 import { signToken } from '../utils/jwt';
 import { sendOtp, verifyOtp } from '../services/otpService';
 import { normalizePhoneBR, normalizeCpf, isValidEmail, isStrongPassword } from '../utils/validators';
+import { sendWelcomeEmail, sendPasswordResetEmail } from '../services/notifications';
+import { generateOtpCode } from '../utils/otp';
+import { createOtp } from '../models/OtpCode';
 
 // ------------------------------------------------------------
 // Helpers
@@ -101,6 +104,11 @@ export async function signup(req: Request, res: Response): Promise<void> {
     } satisfies CreateUserDTO);
 
     await cloneTemplateCategoriesToUser(userId);
+
+    // Email de boas-vindas (best-effort — nao bloqueia)
+    sendWelcomeEmail(email, name).catch((err) =>
+      console.error('Erro enviando welcome email:', err)
+    );
 
     // Dispara OTP de verificacao
     const otp = await sendOtp(normalizedPhone, 'signup', { userId });
@@ -197,7 +205,25 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
   const user = await getUserByPhone(normalized);
   // Resposta uniforme — nao expor se telefone existe ou nao
   if (user) {
-    await sendOtp(normalized, 'reset_password', { userId: user.id });
+    // Gera UM codigo, grava uma vez, envia pelos dois canais com o mesmo valor.
+    const code = generateOtpCode();
+    await createOtp(normalized, code, 'reset_password', { userId: user.id });
+
+    // WhatsApp
+    const { getMessagingClient } = await import('../messaging');
+    getMessagingClient()
+      .sendText(
+        normalized,
+        `📢 *Elsy*\n\nSeu codigo para redefinir a senha: *${code}*\nValido por 5 minutos.`
+      )
+      .catch((err) => console.error('Erro enviando reset OTP whatsapp:', err));
+
+    // Email com o mesmo codigo
+    if (user.email) {
+      sendPasswordResetEmail(user.email, user.name, code).catch((err) =>
+        console.error('Erro enviando reset email:', err)
+      );
+    }
   }
   res.json({ success: true });
 }

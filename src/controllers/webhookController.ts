@@ -12,6 +12,11 @@ import { upsertByAsaasId as upsertPayment } from '../models/Payment';
 import { setSubscriptionStatus, getUserById } from '../models/User';
 import { getMessagingClient } from '../messaging';
 import { env } from '../config/env';
+import {
+  sendPaymentReceiptEmail,
+  sendOverdueEmail,
+  sendCancelledEmail,
+} from '../services/notifications';
 
 // Mapeamento de eventos Asaas para acoes no Elsy.
 // Documentacao: https://asaasv3.docs.apiary.io/#reference/webhook
@@ -36,12 +41,15 @@ async function handlePaymentReceived(payment: any): Promise<void> {
   const sub = await getSubscriptionByAsaas(subAsaasId);
   if (!sub) return;
 
+  const amountCents = Math.round(Number(payment.value || 0) * 100);
+  const paidAt = payment.paymentDate ? new Date(payment.paymentDate) : new Date();
+
   await upsertPayment(payment.id, {
     subscription_id: sub.id,
-    amount_cents: Math.round(Number(payment.value || 0) * 100),
+    amount_cents: amountCents,
     status: 'received',
     due_date: payment.dueDate,
-    paid_at: payment.paymentDate ? new Date(payment.paymentDate) : new Date(),
+    paid_at: paidAt,
     payment_method: payment.billingType,
     raw_payload: payment,
   });
@@ -62,6 +70,14 @@ async function handlePaymentReceived(payment: any): Promise<void> {
     sub.user_id,
     `📢 *Elsy*\n\nRecebemos seu pagamento! Sua assinatura esta ativa.`
   );
+
+  // Email de recibo
+  const user = await getUserById(sub.user_id);
+  if (user?.email) {
+    sendPaymentReceiptEmail(user.email, user.name, amountCents, paidAt).catch((err) =>
+      console.error('Erro enviando recibo email:', err)
+    );
+  }
 }
 
 async function handlePaymentOverdue(payment: any): Promise<void> {
@@ -87,6 +103,14 @@ async function handlePaymentOverdue(payment: any): Promise<void> {
     sub.user_id,
     `📢 *Elsy*\n\nNao conseguimos processar seu pagamento. Atualize seu cartao em ${env.appUrl}/app/billing para continuar usando.`
   );
+
+  // Email overdue
+  const user = await getUserById(sub.user_id);
+  if (user?.email) {
+    sendOverdueEmail(user.email, user.name).catch((err) =>
+      console.error('Erro enviando overdue email:', err)
+    );
+  }
 }
 
 async function handlePaymentRefunded(payment: any): Promise<void> {
@@ -124,6 +148,14 @@ async function handleSubscriptionDeleted(payment: any): Promise<void> {
     sub.user_id,
     `📢 *Elsy*\n\nSua assinatura foi cancelada. Quando quiser voltar, e so reativar em ${env.appUrl}/app/billing.`
   );
+
+  // Email de cancelamento
+  const user = await getUserById(sub.user_id);
+  if (user?.email) {
+    sendCancelledEmail(user.email, user.name).catch((err) =>
+      console.error('Erro enviando cancelled email:', err)
+    );
+  }
 }
 
 async function handlePaymentUpdated(payment: any): Promise<void> {
