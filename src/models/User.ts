@@ -284,8 +284,9 @@ export async function deleteUser(id: number): Promise<void> {
 }
 
 // ------------------------------------------------------------
-// Bootstrap admin (mantido para compatibilidade — cria admin
-// padrao se nao existir nenhum)
+// Bootstrap admin: cria admin inicial APENAS se nao existir nenhum
+// e se ADMIN_BOOTSTRAP_PASSWORD estiver configurado no .env.
+// Em ambientes onde ja ha um admin (caso atual de producao), e no-op.
 // ------------------------------------------------------------
 
 export async function ensureAdminExists(): Promise<void> {
@@ -294,13 +295,20 @@ export async function ensureAdminExists(): Promise<void> {
   );
   if (admins.length > 0) return;
 
+  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  if (!bootstrapPassword) {
+    console.warn('⚠️  Nenhum admin no banco e ADMIN_BOOTSTRAP_PASSWORD nao configurado.');
+    console.warn('    Configure no .env e reinicie, ou crie um admin manualmente.');
+    return;
+  }
+
   await createAdmin({
-    username: 'admin',
-    password: 'admin123',
-    name: 'Administrador',
-    email: 'admin@elsy.com.br',
+    username: process.env.ADMIN_BOOTSTRAP_USERNAME || 'admin',
+    password: bootstrapPassword,
+    name: process.env.ADMIN_BOOTSTRAP_NAME || 'Administrador',
+    email: process.env.ADMIN_BOOTSTRAP_EMAIL,
   });
-  console.log('Default admin user created: admin / admin123');
+  console.log('✅ Admin inicial criado a partir de ADMIN_BOOTSTRAP_*');
 }
 
 // Verifica a senha atual de um usuario pelo id. Faz re-hash transparente
