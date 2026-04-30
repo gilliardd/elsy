@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Request, Response } from 'express';
-import { requireUser } from '../../src/middlewares/auth';
+import { decodeAuth, requireAuth, requireAdmin, requireUser } from '../../src/middlewares/auth';
+import { signToken } from '../../src/utils/jwt';
 
 function makeReq(authHeader?: string): Request {
   return { headers: { authorization: authHeader } } as unknown as Request;
@@ -19,64 +20,105 @@ function makeRes() {
   return res as Response & { _status?: number; _body?: any };
 }
 
-describe('requireUser middleware', () => {
-  it('rejeita request sem header Authorization', () => {
+describe('decodeAuth', () => {
+  it('nao popula req.userId sem header', () => {
     const req = makeReq();
     const res = makeRes();
     const next = vi.fn();
-
-    requireUser(req, res, next);
-
-    expect(res._status).toBe(401);
-    expect(next).not.toHaveBeenCalled();
+    decodeAuth(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
     expect(req.userId).toBeUndefined();
   });
 
-  it('rejeita header sem prefixo Bearer', () => {
-    const req = makeReq('abcdef');
-    const res = makeRes();
-    const next = vi.fn();
-
-    requireUser(req, res, next);
-
-    expect(res._status).toBe(401);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it('rejeita token base64 sem userId valido', () => {
-    const token = Buffer.from('lixo:lixo:lixo').toString('base64');
+  it('popula req.userId e req.userRole com JWT valido', () => {
+    const token = signToken({ userId: 42, role: 'user' });
     const req = makeReq(`Bearer ${token}`);
     const res = makeRes();
     const next = vi.fn();
-
-    requireUser(req, res, next);
-
-    expect(res._status).toBe(401);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it('aceita token valido e popula req.userId', () => {
-    const token = Buffer.from('42:admin:1700000000000').toString('base64');
-    const req = makeReq(`Bearer ${token}`);
-    const res = makeRes();
-    const next = vi.fn();
-
-    requireUser(req, res, next);
-
+    decodeAuth(req, res, next);
     expect(next).toHaveBeenCalledOnce();
     expect(req.userId).toBe(42);
-    expect(res._status).toBeUndefined();
+    expect(req.userRole).toBe('user');
   });
 
-  it('rejeita userId zero ou negativo', () => {
-    const token = Buffer.from('0:admin:1700000000000').toString('base64');
-    const req = makeReq(`Bearer ${token}`);
+  it('ignora token invalido sem bloquear', () => {
+    const req = makeReq('Bearer xxx.yyy.zzz');
     const res = makeRes();
     const next = vi.fn();
+    decodeAuth(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+    expect(req.userId).toBeUndefined();
+  });
+});
 
-    requireUser(req, res, next);
-
+describe('requireAuth', () => {
+  it('rejeita sem userId', () => {
+    const req = {} as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAuth(req, res, next);
     expect(res._status).toBe(401);
     expect(next).not.toHaveBeenCalled();
+  });
+
+  it('passa com userId presente', () => {
+    const req = { userId: 1, userRole: 'user' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAuth(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+  });
+});
+
+describe('requireAdmin', () => {
+  it('rejeita user comum com 403', () => {
+    const req = { userId: 1, userRole: 'user' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAdmin(req, res, next);
+    expect(res._status).toBe(403);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('passa admin', () => {
+    const req = { userId: 1, userRole: 'admin' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireAdmin(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+  });
+});
+
+describe('requireUser', () => {
+  it('rejeita sem auth', () => {
+    const req = {} as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireUser(req, res, next);
+    expect(res._status).toBe(401);
+  });
+
+  it('passa user', () => {
+    const req = { userId: 1, userRole: 'user' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireUser(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('passa admin (admin tem acesso de user)', () => {
+    const req = { userId: 1, userRole: 'admin' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireUser(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('rejeita viewer com 403', () => {
+    const req = { userId: 1, userRole: 'viewer' } as Request;
+    const res = makeRes();
+    const next = vi.fn();
+    requireUser(req, res, next);
+    expect(res._status).toBe(403);
   });
 });

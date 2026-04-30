@@ -33,6 +33,12 @@ export const env = {
     secret: process.env.JWT_SECRET || 'default-secret',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
   },
+
+  // Encryption (AES-256-GCM key, 32 bytes em hex = 64 chars)
+  encryptionKey: process.env.ENCRYPTION_KEY || '',
+
+  // URL publica usada nos links das mensagens transacionais
+  appUrl: process.env.APP_URL || 'http://localhost:3000',
 };
 
 export function validateEnv(): void {
@@ -47,5 +53,15 @@ export function validateEnv(): void {
     console.warn(`\n⚠️  Variaveis de ambiente faltando ou nao configuradas:`);
     missing.forEach((key) => console.warn(`   - ${key}`));
     console.warn(`\n   Configure no arquivo .env antes de usar o bot.\n`);
+  }
+
+  if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'default-secret' ||
+      process.env.JWT_SECRET.startsWith('seu_')) {
+    console.warn('⚠️  JWT_SECRET nao configurado ou usando valor padrao. Defina um valor forte em .env.');
+  }
+
+  if (!process.env.ENCRYPTION_KEY || process.env.ENCRYPTION_KEY.length < 64) {
+    console.warn('⚠️  ENCRYPTION_KEY nao configurada (precisa de 64 chars hex = 32 bytes). Gere com:');
+    console.warn('     node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
   }
 }

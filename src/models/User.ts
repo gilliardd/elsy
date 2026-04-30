@@ -1,148 +1,248 @@
 import { query } from '../config/database';
-import { createHash } from 'crypto';
+import { hashPasswordBcrypt, hashPasswordSha256, verifyPassword } from '../utils/password';
+
+export type UserRole = 'admin' | 'user' | 'viewer';
+export type SubscriptionStatus =
+  | 'incomplete'
+  | 'trialing'
+  | 'active'
+  | 'overdue'
+  | 'blocked'
+  | 'cancelled'
+  | 'cortesia'
+  | 'admin';
 
 export interface User {
   id: number;
   username: string;
   password: string;
+  password_algo: 'sha256' | 'bcrypt';
   name: string;
   email: string | null;
-  role: 'admin' | 'user' | 'viewer';
+  phone_number: string | null;
+  cpf: string | null;
+  phone_verified: boolean;
+  email_verified: boolean;
+  role: UserRole;
   can_create: boolean;
   can_edit: boolean;
   can_delete: boolean;
   is_active: boolean;
+  subscription_status: SubscriptionStatus | null;
+  subscription_expires_at: Date | null;
+  current_subscription_id: number | null;
+  asaas_customer_id: string | null;
+  trial_used: boolean;
+  cortesia_expires_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
 
-export interface UserWithoutPassword extends Omit<User, 'password'> {}
+export type UserWithoutPassword = Omit<User, 'password' | 'password_algo'>;
 
-// Hash password using SHA-256
-export function hashPassword(password: string): string {
-  return createHash('sha256').update(password).digest('hex');
+function stripPassword(user: User): UserWithoutPassword {
+  const { password: _p, password_algo: _a, ...rest } = user;
+  return rest;
 }
 
-// Verify password
-export function verifyPassword(password: string, hash: string): boolean {
-  return hashPassword(password) === hash;
-}
+// ------------------------------------------------------------
+// Lookups
+// ------------------------------------------------------------
 
-// Ensure table exists
-export async function ensureUserTableExists(): Promise<void> {
-  await query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      username VARCHAR(50) NOT NULL UNIQUE,
-      password VARCHAR(64) NOT NULL,
-      name VARCHAR(100) NOT NULL,
-      email VARCHAR(100) NULL,
-      role ENUM('admin', 'user', 'viewer') DEFAULT 'user',
-      can_create BOOLEAN DEFAULT true,
-      can_edit BOOLEAN DEFAULT true,
-      can_delete BOOLEAN DEFAULT false,
-      is_active BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )
-  `);
-}
-
-// Get all users (without passwords)
-export async function getAllUsers(): Promise<UserWithoutPassword[]> {
-  await ensureUserTableExists();
-  const users = await query<User[]>(`
-    SELECT id, username, name, email, role, can_create, can_edit, can_delete, is_active, created_at, updated_at
-    FROM users
-    WHERE is_active = true
-    ORDER BY name
-  `);
-  return users;
-}
-
-// Get user by ID
 export async function getUserById(id: number): Promise<UserWithoutPassword | null> {
-  const rows = await query<User[]>(`
-    SELECT id, username, name, email, role, can_create, can_edit, can_delete, is_active, created_at, updated_at
-    FROM users WHERE id = ? AND is_active = true
-  `, [id]);
-  return rows[0] || null;
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE id = ? AND is_active = TRUE`,
+    [id]
+  );
+  return rows[0] ? stripPassword(rows[0]) : null;
 }
 
-// Get user by username (with password for auth)
 export async function getUserByUsername(username: string): Promise<User | null> {
-  await ensureUserTableExists();
   const rows = await query<User[]>(
-    'SELECT * FROM users WHERE username = ? AND is_active = true',
+    `SELECT * FROM users WHERE username = ? AND is_active = TRUE`,
     [username]
   );
   return rows[0] || null;
 }
 
-// Authenticate user
-export async function authenticateUser(username: string, password: string): Promise<UserWithoutPassword | null> {
-  const user = await getUserByUsername(username);
-  if (!user) return null;
-
-  if (verifyPassword(password, user.password)) {
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
-  }
-
-  return null;
+export async function getUserByPhone(phone: string): Promise<User | null> {
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE phone_number = ? AND is_active = TRUE`,
+    [phone]
+  );
+  return rows[0] || null;
 }
 
-export interface CreateUserDTO {
+export async function getUserByEmail(email: string): Promise<User | null> {
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE email = ? AND is_active = TRUE`,
+    [email]
+  );
+  return rows[0] || null;
+}
+
+export async function getUserByCpf(cpf: string): Promise<User | null> {
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE cpf = ? AND is_active = TRUE`,
+    [cpf]
+  );
+  return rows[0] || null;
+}
+
+export async function getAllUsers(): Promise<UserWithoutPassword[]> {
+  const rows = await query<User[]>(
+    `SELECT * FROM users WHERE is_active = TRUE ORDER BY name`
+  );
+  return rows.map(stripPassword);
+}
+
+// ------------------------------------------------------------
+// Auth
+// ------------------------------------------------------------
+
+// Autentica admin via username + senha. Re-hash transparente para bcrypt
+// quando a senha estava em SHA-256 (Fase 1 -> Fase 2).
+export async function authenticateAdmin(
+  username: string,
+  password: string
+): Promise<UserWithoutPassword | null> {
+  const user = await getUserByUsername(username);
+  if (!user || user.role !== 'admin') return null;
+
+  const { valid, needsRehash } = verifyPassword(password, user.password, user.password_algo);
+  if (!valid) return null;
+
+  if (needsRehash) {
+    await query(
+      `UPDATE users SET password = ?, password_algo = 'bcrypt' WHERE id = ?`,
+      [hashPasswordBcrypt(password), user.id]
+    );
+  }
+
+  return stripPassword(user);
+}
+
+// Autentica usuario comum via telefone + senha.
+export async function authenticateUser(
+  phone: string,
+  password: string
+): Promise<UserWithoutPassword | null> {
+  const user = await getUserByPhone(phone);
+  if (!user || user.role === 'admin') return null;
+
+  const { valid, needsRehash } = verifyPassword(password, user.password, user.password_algo);
+  if (!valid) return null;
+
+  if (needsRehash) {
+    await query(
+      `UPDATE users SET password = ?, password_algo = 'bcrypt' WHERE id = ?`,
+      [hashPasswordBcrypt(password), user.id]
+    );
+  }
+
+  return stripPassword(user);
+}
+
+// ------------------------------------------------------------
+// Mutations
+// ------------------------------------------------------------
+
+export interface CreateAdminDTO {
   username: string;
   password: string;
   name: string;
   email?: string;
-  role?: 'admin' | 'user' | 'viewer';
-  can_create?: boolean;
-  can_edit?: boolean;
-  can_delete?: boolean;
 }
 
-// Create user
-export async function createUser(data: CreateUserDTO): Promise<number> {
-  await ensureUserTableExists();
-
-  // Check if username already exists
+export async function createAdmin(data: CreateAdminDTO): Promise<number> {
   const existing = await getUserByUsername(data.username);
-  if (existing) {
-    throw new Error('Username already exists');
-  }
-
-  const hashedPassword = hashPassword(data.password);
+  if (existing) throw new Error('Username already exists');
 
   const result = await query<any>(
-    `INSERT INTO users (username, password, name, email, role, can_create, can_edit, can_delete)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      data.username,
-      hashedPassword,
-      data.name,
-      data.email || null,
-      data.role || 'user',
-      data.can_create ?? true,
-      data.can_edit ?? true,
-      data.can_delete ?? false,
-    ]
+    `INSERT INTO users (username, password, password_algo, name, email, role,
+                        can_create, can_edit, can_delete, subscription_status)
+     VALUES (?, ?, 'bcrypt', ?, ?, 'admin', TRUE, TRUE, TRUE, 'admin')`,
+    [data.username, hashPasswordBcrypt(data.password), data.name, data.email || null]
   );
-
   return result.insertId;
 }
 
-// Update user
-export async function updateUser(id: number, data: Partial<Omit<CreateUserDTO, 'username'>>): Promise<void> {
+export interface CreateUserDTO {
+  name: string;
+  email: string;
+  phone_number: string;
+  cpf: string;
+  password: string;
+}
+
+// Cria usuario novo (signup). Usa username = email para satisfazer a coluna
+// UNIQUE legada. O login dos usuarios comuns e por telefone.
+export async function createUser(data: CreateUserDTO): Promise<number> {
+  if (await getUserByPhone(data.phone_number)) {
+    throw new Error('Phone already in use');
+  }
+  if (await getUserByEmail(data.email)) {
+    throw new Error('Email already in use');
+  }
+  if (await getUserByCpf(data.cpf)) {
+    throw new Error('CPF already in use');
+  }
+  if (await getUserByUsername(data.email)) {
+    throw new Error('Username already in use');
+  }
+
+  const result = await query<any>(
+    `INSERT INTO users (username, password, password_algo, name, email,
+                        phone_number, cpf, role,
+                        can_create, can_edit, can_delete, subscription_status,
+                        phone_verified, email_verified)
+     VALUES (?, ?, 'bcrypt', ?, ?, ?, ?, 'user', TRUE, TRUE, FALSE,
+             'incomplete', FALSE, FALSE)`,
+    [
+      data.email,
+      hashPasswordBcrypt(data.password),
+      data.name,
+      data.email,
+      data.phone_number,
+      data.cpf,
+    ]
+  );
+  return result.insertId;
+}
+
+export async function setPhoneVerified(userId: number, verified: boolean): Promise<void> {
+  await query(`UPDATE users SET phone_verified = ? WHERE id = ?`, [verified, userId]);
+}
+
+export async function setEmailVerified(userId: number, verified: boolean): Promise<void> {
+  await query(`UPDATE users SET email_verified = ? WHERE id = ?`, [verified, userId]);
+}
+
+export async function updatePassword(userId: number, newPassword: string): Promise<void> {
+  await query(
+    `UPDATE users SET password = ?, password_algo = 'bcrypt' WHERE id = ?`,
+    [hashPasswordBcrypt(newPassword), userId]
+  );
+}
+
+export async function updatePhone(userId: number, newPhone: string): Promise<void> {
+  if (await getUserByPhone(newPhone)) {
+    throw new Error('Phone already in use');
+  }
+  await query(
+    `UPDATE users SET phone_number = ?, phone_verified = TRUE WHERE id = ?`,
+    [newPhone, userId]
+  );
+}
+
+export async function updateProfile(
+  userId: number,
+  data: { name?: string; email?: string }
+): Promise<void> {
   const fields: string[] = [];
   const values: any[] = [];
 
-  if (data.password) {
-    fields.push('password = ?');
-    values.push(hashPassword(data.password));
-  }
-  if (data.name) {
+  if (data.name !== undefined) {
     fields.push('name = ?');
     values.push(data.name);
   }
@@ -150,53 +250,91 @@ export async function updateUser(id: number, data: Partial<Omit<CreateUserDTO, '
     fields.push('email = ?');
     values.push(data.email);
   }
-  if (data.role) {
-    fields.push('role = ?');
-    values.push(data.role);
-  }
-  if (data.can_create !== undefined) {
-    fields.push('can_create = ?');
-    values.push(data.can_create);
-  }
-  if (data.can_edit !== undefined) {
-    fields.push('can_edit = ?');
-    values.push(data.can_edit);
-  }
-  if (data.can_delete !== undefined) {
-    fields.push('can_delete = ?');
-    values.push(data.can_delete);
-  }
 
-  if (fields.length > 0) {
-    values.push(id);
-    await query(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
-  }
+  if (fields.length === 0) return;
+
+  values.push(userId);
+  await query(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
 }
 
-// Delete user (soft delete)
-export async function deleteUser(id: number): Promise<void> {
-  await query('UPDATE users SET is_active = false WHERE id = ?', [id]);
-}
-
-// Create default admin user if none exists
-export async function ensureAdminExists(): Promise<void> {
-  await ensureUserTableExists();
-
-  const admins = await query<User[]>(
-    "SELECT * FROM users WHERE role = 'admin' AND is_active = true"
+export async function setSubscriptionStatus(
+  userId: number,
+  status: SubscriptionStatus,
+  expiresAt: Date | null = null,
+  subscriptionId: number | null = null
+): Promise<void> {
+  await query(
+    `UPDATE users SET subscription_status = ?, subscription_expires_at = ?,
+                      current_subscription_id = COALESCE(?, current_subscription_id)
+     WHERE id = ?`,
+    [status, expiresAt, subscriptionId, userId]
   );
-
-  if (admins.length === 0) {
-    await createUser({
-      username: 'admin',
-      password: 'admin123',
-      name: 'Administrador',
-      email: 'admin@finbot.com',
-      role: 'admin',
-      can_create: true,
-      can_edit: true,
-      can_delete: true,
-    });
-    console.log('Default admin user created: admin / admin123');
-  }
 }
+
+export async function setAsaasCustomerId(userId: number, asaasId: string): Promise<void> {
+  await query(`UPDATE users SET asaas_customer_id = ? WHERE id = ?`, [asaasId, userId]);
+}
+
+export async function markTrialUsed(userId: number): Promise<void> {
+  await query(`UPDATE users SET trial_used = TRUE WHERE id = ?`, [userId]);
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  await query(`UPDATE users SET is_active = FALSE WHERE id = ?`, [id]);
+}
+
+// ------------------------------------------------------------
+// Bootstrap admin: cria admin inicial APENAS se nao existir nenhum
+// e se ADMIN_BOOTSTRAP_PASSWORD estiver configurado no .env.
+// Em ambientes onde ja ha um admin (caso atual de producao), e no-op.
+// ------------------------------------------------------------
+
+export async function ensureAdminExists(): Promise<void> {
+  const admins = await query<User[]>(
+    `SELECT id FROM users WHERE role = 'admin' AND is_active = TRUE LIMIT 1`
+  );
+  if (admins.length > 0) return;
+
+  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD;
+  if (!bootstrapPassword) {
+    console.warn('⚠️  Nenhum admin no banco e ADMIN_BOOTSTRAP_PASSWORD nao configurado.');
+    console.warn('    Configure no .env e reinicie, ou crie um admin manualmente.');
+    return;
+  }
+
+  await createAdmin({
+    username: process.env.ADMIN_BOOTSTRAP_USERNAME || 'admin',
+    password: bootstrapPassword,
+    name: process.env.ADMIN_BOOTSTRAP_NAME || 'Administrador',
+    email: process.env.ADMIN_BOOTSTRAP_EMAIL,
+  });
+  console.log('✅ Admin inicial criado a partir de ADMIN_BOOTSTRAP_*');
+}
+
+// Verifica a senha atual de um usuario pelo id. Faz re-hash transparente
+// caso o algoritmo legado (SHA-256) seja detectado.
+export async function verifyUserPasswordById(
+  userId: number,
+  password: string
+): Promise<boolean> {
+  const rows = await query<{ password: string; password_algo: 'sha256' | 'bcrypt' }[]>(
+    `SELECT password, password_algo FROM users WHERE id = ? AND is_active = TRUE`,
+    [userId]
+  );
+  if (rows.length === 0) return false;
+
+  const { valid, needsRehash } = verifyPassword(password, rows[0].password, rows[0].password_algo);
+  if (!valid) return false;
+
+  if (needsRehash) {
+    await query(
+      `UPDATE users SET password = ?, password_algo = 'bcrypt' WHERE id = ?`,
+      [hashPasswordBcrypt(password), userId]
+    );
+  }
+
+  return true;
+}
+
+// Helpers de migracao SHA-256 -> bcrypt usados em testes/scripts.
+export { hashPasswordBcrypt, hashPasswordSha256 };
